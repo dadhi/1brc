@@ -3,7 +3,9 @@ using System.Runtime.InteropServices;
 
 namespace _1brc
 {
-    [StructLayout(LayoutKind.Sequential, Size = 16)]
+    [StructLayout(LayoutKind.Sequential, 
+        Size = 16 // bytes: Sum + Count + Min + Max
+    )]
     public struct Summary
     {
         public long Sum;
@@ -14,44 +16,22 @@ namespace _1brc
         public double Average => (double)Sum / Count;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Apply(int value, bool existing)
-        {
-            if (existing)
-                Apply(value);
-            else
-                Init(value);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Init(int value)
-        {
-            Sum = value;
-            Count = 1;
-            Min = (short)value;
-            Max = (short)value;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Apply(int value)
         {
             Sum += value;
             Count++;
-            Min = (short)GetMin(Min, value);
-            Max = (short)GetMax(Max, value);
-            
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static int GetMin(int a, int b)
-            {
-                int delta = a - b;
-                return b + (delta & (delta >> 31));
-            }
 
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            static int GetMax(int a, int b)
-            {
-                int delta = a - b;
-                return a - (delta & (delta >> 31));
-            }
+            // if (Min > value)
+            //     Min = (short)value;
+            // var newMin = value < Min;
+            // var newMax = value > Max;
+            // Min = value * Unsafe.As<bool, byte>(ref newMin) +;
+
+            int deltaMin = Min - value;
+            Min = (short)(value + (deltaMin & (deltaMin >> 31)));
+            
+            int deltaMax = Max - value;
+            Max = (short)(Max - (deltaMax & (deltaMax >> 31)));
         }
 
         public void Merge(Summary other)

@@ -110,7 +110,15 @@ namespace _1brc
 
                 int intPart = remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1);
 
-                it.Apply(intPart, exists);
+                if (exists)
+                    it.Apply(intPart);
+                else
+                {
+                    it.Sum = intPart;
+                    it.Count = 1;
+                    it.Min = (short)intPart;
+                    it.Max = (short)intPart;
+                }
                 
                 remaining = remaining.AdvanceUnsafe(nlIdx + 1);
             }
