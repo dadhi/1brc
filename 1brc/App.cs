@@ -2,10 +2,24 @@
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using System.Runtime.InteropServices;
 using static System.Runtime.InteropServices.CollectionsMarshal;
 
 namespace _1brc
 {
+    
+    [StructLayout(LayoutKind.Sequential, 
+        Size = 16 // bytes: Sum + Count + Min + Max
+    )]
+    public struct Summary
+    {
+        public long Sum;
+        public int Cnt;
+        public short Min;
+        public short Max;
+        public override string ToString() => $"{Min / 10.0:N1}/{(double)Sum / Cnt / 10.0:N1}/{Max / 10.0:N1}";
+    }
+
     public unsafe class App : IDisposable
     {
         private readonly FileStream _fileStream;
@@ -111,11 +125,16 @@ namespace _1brc
                 int intPart = remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1);
 
                 if (exists)
-                    it.Apply(intPart);
+                {
+                    it.Sum += intPart;
+                    it.Cnt++;
+                    it.Min = (short)Math.Min(it.Min, intPart);
+                    it.Max = (short)Math.Max(it.Max, intPart);
+                }
                 else
                 {
                     it.Sum = intPart;
-                    it.Count = 1;
+                    it.Cnt = 1;
                     it.Min = (short)intPart;
                     it.Max = (short)intPart;
                 }
@@ -140,7 +159,14 @@ namespace _1brc
                     {
                         ref var summary = ref GetValueRefOrAddDefault(result, pair.Key, out bool exists);
                         if (exists)
-                            summary.Merge(pair.Value);
+                        {
+                            var other = pair.Value;
+                            summary.Sum += other.Sum;
+                            summary.Cnt += other.Cnt;
+                            summary.Min = Math.Min(summary.Min, other.Min);
+                            summary.Max = Math.Max(summary.Max, other.Max);
+
+                        }
                         else
                             summary = pair.Value;
                     }
@@ -160,7 +186,7 @@ namespace _1brc
                          .Select(x => (Name: x.Key.ToString(), x.Value))
                          .OrderBy(x => x.Name, StringComparer.Ordinal))
             {
-                count += pair.Value.Count;
+                count += pair.Value.Cnt;
                 // Console.Write($"{pair.Name} = {pair.Value}");
                 line++;
                 // if (line < result.Count)
