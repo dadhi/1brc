@@ -101,11 +101,17 @@ namespace _1brc
             while (remaining.Length > 0)
             {
                 var separatorIdx = remaining.IndexOf(0, (byte)';');
+
                 var dotIdx = remaining.IndexOf(separatorIdx + 1, (byte)'.');
+                
                 var nlIdx = remaining.IndexOf(dotIdx + 1, (byte)'\n');
                         
                 ref var it = ref GetValueRefOrAddDefault(result, new(remaining.Pointer, separatorIdx), out var exists);
-                it.Apply(remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1), exists);
+
+                int intPart = remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1);
+
+                it.Apply(intPart, exists);
+                
                 remaining = remaining.AdvanceUnsafe(nlIdx + 1);
             }
 

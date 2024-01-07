@@ -20,13 +20,7 @@ namespace _1brc
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal byte GetAtUnsafe(int idx) => Pointer[idx];
-
-        public ReadOnlySpan<byte> Span
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => new(Pointer, Length);
-        }
+        public ReadOnlySpan<byte> ToSpan() => new(Pointer, Length);
 
         /// <summary>
         /// Slice without bound checks. Use only when the bounds are checked/ensured before the call.
@@ -35,7 +29,7 @@ namespace _1brc
         internal Utf8Span AdvanceUnsafe(int offset) => new(Pointer + offset, Length - offset);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool Equals(Utf8Span other) => Span.SequenceEqual(other.Span);
+        public bool Equals(Utf8Span other) => ToSpan().SequenceEqual(other.ToSpan());
 
         public override bool Equals(object? obj)
         {
@@ -56,12 +50,12 @@ namespace _1brc
             // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
 
             if (Length > 3)
-                return (Length * 820243) ^ (*(int*)Pointer);
+                return (Length * 820243) ^ (int)*(uint*)Pointer;
 
             if (Length > 1)
-                return *(short*)Pointer;
+                return (int)(uint)*(ushort*)Pointer;
 
-            return *Pointer;
+            return (int)(uint)*Pointer;
         }
 
         public override string ToString() => new((sbyte*)Pointer, 0, Length, Encoding.UTF8);
@@ -70,55 +64,50 @@ namespace _1brc
         public int ParseInt(int start, int length)
         {
             int sign = 1;
-            int value = 0;
-
-            int i = start;
-            for (; i < start + length; i++)
+            uint value = 0;
+            var end = start + length;
+            
+            for (; start < end; start++)
             {
-                var c = (int)GetAtUnsafe(i);
+                var c = (uint)Pointer[start];
 
                 if (c == '-')
                     sign = -1;
                 else
-                    value = value * 10 + (c - '0');
+                    value = value * 10u + (c - '0');
             }
 
-            var fractional = GetAtUnsafe(i + 1) - '0';
-            return sign * (value * 10 + fractional); 
+            var fractional = (uint)Pointer[start + 1] - '0';
+            return sign * (int)(value * 10 + fractional);
         }
-        
-        
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal int IndexOf(int start, byte value)
         {
-            int offset = 0;
-            
             if (Avx2.IsSupported)
             {
-                Vector<byte> vec = default;
-                for (var i = 0; i < int.MaxValue; i++)
+                Vector<byte> vec;
+
+                while (true)
                 {
-                    offset = Vector<byte>.Count * i;
-                    if(start + offset >= Length)
-                        goto BAIL;
-                    var data = Unsafe.ReadUnaligned<Vector<byte>>(Pointer + start + offset);
+                    if (start + Vector<byte>.Count >= Length)
+                        goto FALLBACK;
+                    var data = Unsafe.ReadUnaligned<Vector<byte>>(Pointer + start);
                     vec = Vector.Equals(data, new Vector<byte>(value));
                     if (!vec.Equals(Vector<byte>.Zero))
                         break;
+                    start += Vector<byte>.Count;
                 }
 
                 var matches = vec.AsVector256();
                 var mask = Avx2.MoveMask(matches);
                 int tzc = BitOperations.TrailingZeroCount((uint)mask);
-                return start + offset + tzc;
-                
-                BAIL:
-                offset -= Vector<byte>.Count;
+                return start + tzc;
             }
 
-            start += offset;
-            
-            int indexOf = AdvanceUnsafe(start).Span.IndexOf(value);
+            FALLBACK:
+
+            int indexOf = AdvanceUnsafe(start).ToSpan().IndexOf(value);
             return indexOf < 0 ? Length : start + indexOf;
         }
     }
