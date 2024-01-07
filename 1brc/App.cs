@@ -41,7 +41,7 @@ namespace _1brc
             _fileLength = fileLength;
         }
 
-        public List<(long start, int length)> SplitIntoMemoryChunks()
+        public List<Utf8Span> SplitIntoMemoryChunks()
         {
             var sw = Stopwatch.StartNew();
             Debug.Assert(_fileStream.Position == 0);
@@ -58,45 +58,23 @@ namespace _1brc
                 chunkSize = _fileLength / chunkCount;
             }
 
-            List<(long start, int length)> chunks = new();
+            List<Utf8Span> chunks = new(capacity: chunkCount); // todo: use array
 
             long pos = 0;
-
-            for (int i = 0; i < chunkCount; i++)
+            while (true)
             {
-                if (pos + chunkSize >= _fileLength)
+                var nextChunkPos = pos + chunkSize;
+                if (nextChunkPos >= _fileLength)
                 {
-                    chunks.Add((pos, (int)(_fileLength - pos)));
+                    chunks.Add(new(_pointer + pos, (int)(_fileLength - pos)));
                     break;
                 }
 
-                var newPos = pos + chunkSize;
+                nextChunkPos = AlignToNewLine(_fileStream, nextChunkPos);
 
-                _fileStream.Position = newPos;
+                chunks.Add(new(_pointer + pos, (int)(nextChunkPos - pos)));
 
-                int c;
-                while ((c = _fileStream.ReadByte()) >= 0 && c != '\n')
-                {
-                }
-
-                newPos = _fileStream.Position;
-                var len = newPos - pos;
-                chunks.Add((pos, (int)(len)));
-                pos = newPos;
-            }
-
-            var previous = chunks[0];
-            for (int i = 1; i < chunks.Count; i++)
-            {
-                var current = chunks[i];
-
-                if (previous.start + previous.length != current.start)
-                    throw new Exception("Bad chunks");
-
-                if (i == chunks.Count - 1 && current.start + current.length != _fileLength)
-                    throw new Exception("Bad last chunks");
-
-                previous = current;
+                pos = nextChunkPos;
             }
 
             _fileStream.Position = 0;
@@ -106,10 +84,21 @@ namespace _1brc
             return chunks;
         }
 
-        public Dictionary<Utf8Span, Summary> ProcessChunk(long start, int length)
+        private static long AlignToNewLine(FileStream fileStream, long newPos)
+        {
+            fileStream.Position = newPos;
+
+            int c;
+            while ((c = fileStream.ReadByte()) >= 0 && c != '\n')
+            {
+            }
+
+            return fileStream.Position;
+        }
+
+        public static Dictionary<Utf8Span, Summary> ProcessChunk(Utf8Span remaining)
         {
             var result = new Dictionary<Utf8Span, Summary>(DICT_INIT_CAPACITY);
-            var remaining = new Utf8Span(_pointer + start, length);
 
             while (remaining.Length > 0)
             {
@@ -117,8 +106,8 @@ namespace _1brc
                 var dotIdx = remaining.IndexOf(separatorIdx + 1, (byte)'.');
                 var nlIdx = remaining.IndexOf(dotIdx + 1, (byte)'\n');
                         
-                GetValueRefOrAddDefault(result, new Utf8Span(remaining.Pointer, separatorIdx), out var exists)
-                    .Apply(remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1), exists);
+                ref var it = ref GetValueRefOrAddDefault(result, new Utf8Span(remaining.Pointer, separatorIdx), out var exists);
+                it.Apply(remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1), exists);
                 remaining = remaining.SliceUnsafe(nlIdx + 1);
             }
 
@@ -131,7 +120,7 @@ namespace _1brc
 #if DEBUG
                 .WithDegreeOfParallelism(1)
 #endif
-                .Select((tuple => ProcessChunk(tuple.start, tuple.length)))
+                .Select(ProcessChunk)
                 .ToList()
                 .Aggregate((result, chunk) =>
                 {
@@ -152,21 +141,21 @@ namespace _1brc
             var result = Process();
 
             long count = 0;
-            Console.OutputEncoding = Encoding.UTF8;
-            Console.Write("{");
+            // Console.OutputEncoding = Encoding.UTF8;
+            // Console.Write("{");
             var line = 0;
             foreach (var pair in result
                          .Select(x => (Name: x.Key.ToString(), x.Value))
                          .OrderBy(x => x.Name, StringComparer.Ordinal))
             {
                 count += pair.Value.Count;
-                Console.Write($"{pair.Name} = {pair.Value}");
+                // Console.Write($"{pair.Name} = {pair.Value}");
                 line++;
-                if (line < result.Count)
-                    Console.Write(", ");
+                // if (line < result.Count)
+                    // Console.Write(", ");
             }
 
-            Console.WriteLine("}");
+            // Console.WriteLine("}");
 
             if (count != 1_000_000_000)
                 Console.WriteLine($"Total row count {count:N0}");
