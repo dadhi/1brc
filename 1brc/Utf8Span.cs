@@ -7,10 +7,10 @@ using System.Text;
 
 namespace _1brc
 {
-    public unsafe struct Utf8Span : IEquatable<Utf8Span>
+    public unsafe readonly struct Utf8Span : IEquatable<Utf8Span>
     {
-        internal byte* Pointer;
-        internal int Length;
+        internal readonly byte* Pointer;
+        internal readonly int Length;
 
         public Utf8Span(byte* pointer, int length)
         {
@@ -27,18 +27,12 @@ namespace _1brc
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => new(Pointer, Length);
         }
-        
-        /// <summary>
-        /// Slice without bound checks. Use only when the bounds are checked/ensured before the call.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal Utf8Span SliceUnsafe(int start, int length) => new(Pointer + start, length);
 
         /// <summary>
         /// Slice without bound checks. Use only when the bounds are checked/ensured before the call.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal Utf8Span SliceUnsafe(int start) => new(Pointer + start, Length - start);
+        internal Utf8Span AdvanceUnsafe(int offset) => new(Pointer + offset, Length - offset);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Utf8Span other) => Span.SequenceEqual(other.Span);
@@ -102,7 +96,6 @@ namespace _1brc
             if (Avx2.IsSupported)
             {
                 Vector<byte> vec = default;
-                
                 for (var i = 0; i < int.MaxValue; i++)
                 {
                     offset = Vector<byte>.Count * i;
@@ -125,7 +118,7 @@ namespace _1brc
 
             start += offset;
             
-            int indexOf = SliceUnsafe(start).Span.IndexOf(value);
+            int indexOf = AdvanceUnsafe(start).Span.IndexOf(value);
             return indexOf < 0 ? Length : start + indexOf;
         }
     }

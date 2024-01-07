@@ -17,7 +17,7 @@ namespace _1brc
 
         private readonly int _initialChunkCount;
 
-        private const int DICT_INIT_CAPACITY = 10000;
+        private const int DICT_INIT_CAPACITY = 10_000;
         private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
 
         public string FilePath { get; }
@@ -89,9 +89,7 @@ namespace _1brc
             fileStream.Position = newPos;
 
             int c;
-            while ((c = fileStream.ReadByte()) >= 0 && c != '\n')
-            {
-            }
+            while ((c = fileStream.ReadByte()) >= 0 && c != '\n') {}
 
             return fileStream.Position;
         }
@@ -106,9 +104,9 @@ namespace _1brc
                 var dotIdx = remaining.IndexOf(separatorIdx + 1, (byte)'.');
                 var nlIdx = remaining.IndexOf(dotIdx + 1, (byte)'\n');
                         
-                ref var it = ref GetValueRefOrAddDefault(result, new Utf8Span(remaining.Pointer, separatorIdx), out var exists);
+                ref var it = ref GetValueRefOrAddDefault(result, new(remaining.Pointer, separatorIdx), out var exists);
                 it.Apply(remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1), exists);
-                remaining = remaining.SliceUnsafe(nlIdx + 1);
+                remaining = remaining.AdvanceUnsafe(nlIdx + 1);
             }
 
             return result;
