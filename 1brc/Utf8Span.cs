@@ -1,8 +1,5 @@
 using System.Diagnostics;
-using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 using System.Text;
 
 namespace _1brc
@@ -10,23 +7,17 @@ namespace _1brc
     public unsafe readonly struct Utf8Span : IEquatable<Utf8Span>
     {
         internal readonly byte* Pointer;
-        internal readonly int Length;
+        internal readonly int Remains;
 
         public Utf8Span(byte* pointer, int length)
         {
             Debug.Assert(length >= 0);
             Pointer = pointer;
-            Length = length;
+            Remains = length;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ReadOnlySpan<byte> ToSpan() => new(Pointer, Length);
-
-        /// <summary>
-        /// Slice without bound checks. Use only when the bounds are checked/ensured before the call.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal Utf8Span AdvanceUnsafe(int offset) => new(Pointer + offset, Length - offset);
+        public ReadOnlySpan<byte> ToSpan() => new(Pointer, Remains);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Utf8Span other) => ToSpan().SequenceEqual(other.ToSpan());
@@ -47,44 +38,15 @@ namespace _1brc
 
             // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
 
-            if (Length > 3)
-                return (Length * 820243) ^ (int)*(uint*)Pointer;
+            if (Remains > 3)
+                return (Remains * 820243) ^ (int)*(uint*)Pointer;
 
-            if (Length > 1)
+            if (Remains > 1)
                 return (int)(uint)*(ushort*)Pointer;
 
             return (int)(uint)*Pointer;
         }
 
-        public override string ToString() => new((sbyte*)Pointer, 0, Length, Encoding.UTF8);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal int IndexOf(int start, byte character)
-        {
-            if (Avx2.IsSupported)
-            {
-                Vector<byte> vec;
-                while (true)
-                {
-                    if (start + Vector<byte>.Count >= Length)
-                        goto FALLBACK;
-                    var data = Unsafe.ReadUnaligned<Vector<byte>>(Pointer + start);
-                    vec = Vector.Equals(data, new Vector<byte>(character));
-                    if (!vec.Equals(Vector<byte>.Zero))
-                        break;
-                    start += Vector<byte>.Count;
-                }
-
-                var matches = vec.AsVector256();
-                var mask = Avx2.MoveMask(matches);
-                int tzc = BitOperations.TrailingZeroCount((uint)mask);
-                return start + tzc;
-            }
-
-            FALLBACK:
-
-            int indexOf = AdvanceUnsafe(start).ToSpan().IndexOf(character);
-            return indexOf < 0 ? Length : start + indexOf;
-        }
+        public override string ToString() => new((sbyte*)Pointer, 0, Remains, Encoding.UTF8);
     }
 }

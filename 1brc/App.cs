@@ -4,8 +4,10 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using static System.Runtime.InteropServices.CollectionsMarshal;
-using System.Buffers.Text;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics.X86;
+using System.Numerics;
+using System.Runtime.Intrinsics;
 
 namespace _1brc
 {
@@ -110,60 +112,94 @@ namespace _1brc
             return fileStream.Position;
         }
 
+        const byte SEMICOLON = (byte)';';
+
+        const byte VEC_BYTES = 32; // Vector256 - Avx2.IsSupported
+
         public static Dictionary<Utf8Span, Summary> ProcessChunk(Utf8Span span)
         {
             var result = new Dictionary<Utf8Span, Summary>(DICT_INIT_CAPACITY);
 
-            while (span.Length > 0)
+            var vecSemicolon = new Vector<byte>(SEMICOLON);
+            var vecZero = Vector<byte>.Zero;
+
+            var pointer = span.Pointer;
+            var remains = span.Remains;
+            while (remains > 0)
             {
-                var byteAt = span.Pointer;
-
-                var separatorIdx = span.IndexOf(0, (byte)';');
-
-                var numPos = separatorIdx + 1;
-                var b = byteAt[numPos];
-                int sign = 1;
-                if (b == '-')
+                // we don't expect the first byte to be ';' it should be some name at least - so start from the second byte
+                var pos = 1;
+                var semicolonIndex = 0;
+                if (Avx2.IsSupported) // hot-path
                 {
-                    sign = -1;
-                    ++numPos;
-                }
-                int num = 0;
-                while (true)
-                {
-                    b = byteAt[numPos++];
-                    if (b == '.')
-                        break;
-                    num = (num * 10) + (b - '0');
-                }
+                    while (true)
+                    {
+                        if (remains < pos + VEC_BYTES) // handle the small remainder without SIMD
+                        {
+                            semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, remains - pos).IndexOf(SEMICOLON);
+                            if (semicolonIndex == -1) // todo: @perf convert to Debug.Assert if we assume a well formed input
+                                return result; // if semicolon is not found, then the last record is not complete or empty - se we're done
+                            break;
+                        }
 
-                // store the fractional part as part of number X 10
-                b = byteAt[numPos];
-                num = (num * 10) + (b - '0');
-
-                num *= sign;
-
-                // ignore any other digits, symbols until new line (it is a rare case because we expect 1 fractionak only)
-                while (byteAt[++numPos] != '\n') {}
-
-                span = new(byteAt + numPos + 1, span.Length - numPos - 1);
-
-                ref var res = ref GetValueRefOrAddDefault(result, new(byteAt, separatorIdx), out var exists);
-
-                if (exists)
-                {
-                    res.Sum += num;
-                    res.Cnt++;
-                    res.Min = (short)Math.Min(res.Min, num);
-                    res.Max = (short)Math.Max(res.Max, num);
+                        var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(pointer + pos);
+                        var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
+                        if (!vecEqSemicolon.Equals(vecZero))
+                        {
+                            var foundMask = Avx2.MoveMask(vecEqSemicolon.AsVector256());
+                            semicolonIndex = BitOperations.TrailingZeroCount((uint)foundMask);
+                            break;
+                        }
+                        pos += VEC_BYTES;
+                    }
                 }
                 else
                 {
-                    res.Sum = num;
-                    res.Cnt = 1;
-                    res.Min = (short)num;
-                    res.Max = (short)num;
+                    semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, remains - pos).IndexOf(SEMICOLON);
+                    if (semicolonIndex == -1)
+                        return result;
                 }
+
+                pos += semicolonIndex + 1;
+
+                int number = 0;
+                // read first 2 bytes together to handle the first being the '-' sign
+                var s = pointer[pos];
+                var b = pointer[pos + 1];
+                if (s != '-')
+                    number = ((s - '0') * 10) + (b - '0');
+                else
+                    number = -(b - '0');
+                ++pos;
+                while ((b = pointer[++pos]) != '.')
+                    number = (number * 10) + (b - '0');
+
+                // read the fractional part after the dot and store it as part of number x10
+                b = pointer[++pos];
+                number = (number * 10) + (b - '0');
+
+                // ignore any other digits or symbols until new line (it is a rare case because we expect 1 fractionak only)
+                while (pointer[++pos] != '\n') {}
+
+                ref var res = ref GetValueRefOrAddDefault(result, new(pointer, semicolonIndex), out var exists);
+                if (exists)
+                {
+                    res.Sum += number;
+                    res.Cnt++;
+                    res.Min = (short)Math.Min(res.Min, number);
+                    res.Max = (short)Math.Max(res.Max, number);
+                }
+                else
+                {
+                    res.Sum = number;
+                    res.Cnt = 1;
+                    res.Min = (short)number;
+                    res.Max = (short)number;
+                }
+
+                // advance to the next line
+                pointer += pos + 1;
+                remains -= pos + 1;
             }
 
             return result;
