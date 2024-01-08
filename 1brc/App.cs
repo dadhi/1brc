@@ -180,10 +180,10 @@ namespace _1brc
                 else
                 {
                     if (b2 == '.')
-                        number = -(b1 - '0') * 10 + (b3 - '0'); // -*.*\n
+                        number = -((b1 - '0') * 10 + (b3 - '0')); // -*.*\n
                     else
                     {
-                        number = -(b1 - '0') * 100 + (b2 - '0') * 10 + pointer[pos + 4]; // -**.*\n
+                        number = -((b1 - '0') * 100 + (b2 - '0') * 10 + pointer[pos + 4]); // -**.*\n
                         b3 = pointer[pos + 5];
                         ++pos;
                     }
