@@ -159,35 +159,23 @@ namespace _1brc
 
                 pos += semicolonIndex + 1;
 
-                // read the first 4 bytes together
-                // and explicitly handle the temperature patters
-                int number = 0;
+                // explicitly handle the temperature patterns
                 var b0 = pointer[pos];
+                var sign = 1;
+                if (b0 == '-')
+                {
+                    sign = -1;
+                    b0 = pointer[++pos];
+                }
                 var b1 = pointer[pos + 1];
                 var b2 = pointer[pos + 2];
                 var b3 = pointer[pos + 3];
-                if (b0 != '-')
-                {
-                    if (b1 == '.')
-                        number = (b0 - '0') * 10 + (b2 - '0'); // *.*\n
-                    else
-                    {
-                        number = (b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'); // **.*\n
-                        b3 = pointer[pos + 4];
-                        ++pos;
-                    }
-                }
+
+                int number;
+                if (b1 == '.')
+                    number = sign * ((b0 - '0') * 10 + (b2 - '0')); // (-)*.*\n
                 else
-                {
-                    if (b2 == '.')
-                        number = -((b1 - '0') * 10 + (b3 - '0')); // -*.*\n
-                    else
-                    {
-                        number = -((b1 - '0') * 100 + (b2 - '0') * 10 + pointer[pos + 4]); // -**.*\n
-                        b3 = pointer[pos + 5];
-                        ++pos;
-                    }
-                }
+                    number = sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0')); // (-)**.*\n
 
                 pos += 3;
                 while (b3 != '\n' & ++pos < length)
