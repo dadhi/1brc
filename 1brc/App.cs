@@ -35,7 +35,7 @@ namespace _1brc
 
         private readonly int _initialChunkCount;
 
-        private const int DICT_INIT_CAPACITY = 10_000;
+        private const int DICT_INIT_CAPACITY = 1_024;
         private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
 
         public string FilePath { get; }
@@ -124,21 +124,19 @@ namespace _1brc
             var vecZero = Vector<byte>.Zero;
 
             var pointer = span.Pointer;
-            var remains = span.Remains;
-            while (remains > 0)
+            var length = span.Length;
+            var pos = 1; // we don't expect the first byte to be ';' it should be the name - so start from the second byte
+            while (pos < length)
             {
-                // we don't expect the first byte to be ';' it should be some name at least - so start from the second byte
-                var pos = 1;
                 var semicolonIndex = 0;
                 if (Avx2.IsSupported) // hot-path
                 {
                     while (true)
                     {
-                        if (remains < pos + VEC_BYTES) // handle the small remainder without SIMD
+                        if (length < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
                         {
-                            semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, remains - pos).IndexOf(SEMICOLON);
-                            if (semicolonIndex == -1) // todo: @perf convert to Debug.Assert if we assume a well formed input
-                                return result; // if semicolon is not found, then the last record is not complete or empty - se we're done
+                            semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, length - pos).IndexOf(SEMICOLON);
+                            Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly."); 
                             break;
                         }
 
@@ -155,15 +153,14 @@ namespace _1brc
                 }
                 else
                 {
-                    semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, remains - pos).IndexOf(SEMICOLON);
-                    if (semicolonIndex == -1)
-                        return result;
+                    semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, length - pos).IndexOf(SEMICOLON);
+                    Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly."); 
                 }
 
                 pos += semicolonIndex + 1;
 
                 int number = 0;
-                // read first 2 bytes together to handle the first being the '-' sign
+                // read the first 2 bytes together to handle the first being the '-' sign
                 var s = pointer[pos];
                 var b = pointer[pos + 1];
                 if (s != '-')
@@ -179,7 +176,7 @@ namespace _1brc
                 number = (number * 10) + (b - '0');
 
                 // ignore any other digits or symbols until new line (it is a rare case because we expect 1 fractionak only)
-                while (pointer[++pos] != '\n') {}
+                while (++pos < length & pointer[pos] != '\n') {}
 
                 ref var res = ref GetValueRefOrAddDefault(result, new(pointer, semicolonIndex), out var exists);
                 if (exists)
@@ -197,9 +194,7 @@ namespace _1brc
                     res.Max = (short)number;
                 }
 
-                // advance to the next line
-                pointer += pos + 1;
-                remains -= pos + 1;
+                pos += 2; // advance to the next line, the 2nd byte
             }
 
             return result;
@@ -257,6 +252,7 @@ namespace _1brc
 
             if (count != 1_000_000_000)
                 Console.WriteLine($"Total row count {count:N0}");
+            Console.WriteLine($"Total unique results {line:N0}");
         }
 
         public void Dispose()

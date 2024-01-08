@@ -7,17 +7,17 @@ namespace _1brc
     public unsafe readonly struct Utf8Span : IEquatable<Utf8Span>
     {
         internal readonly byte* Pointer;
-        internal readonly int Remains;
+        internal readonly int Length;
 
         public Utf8Span(byte* pointer, int length)
         {
             Debug.Assert(length >= 0);
             Pointer = pointer;
-            Remains = length;
+            Length = length;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ReadOnlySpan<byte> ToSpan() => new(Pointer, Remains);
+        public ReadOnlySpan<byte> ToSpan() => new(Pointer, Length);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Utf8Span other) => ToSpan().SequenceEqual(other.ToSpan());
@@ -38,15 +38,15 @@ namespace _1brc
 
             // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
 
-            if (Remains > 3)
-                return (Remains * 820243) ^ (int)*(uint*)Pointer;
+            if (Length > 3)
+                return (Length * 820243) ^ (int)*(uint*)Pointer;
 
-            if (Remains > 1)
+            if (Length > 1)
                 return (int)(uint)*(ushort*)Pointer;
 
             return (int)(uint)*Pointer;
         }
 
-        public override string ToString() => new((sbyte*)Pointer, 0, Remains, Encoding.UTF8);
+        public override string ToString() => new((sbyte*)Pointer, 0, Length, Encoding.UTF8);
     }
 }
