@@ -31,10 +31,8 @@ namespace _1brc
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Utf8Span other) => ToSpan().SequenceEqual(other.ToSpan());
 
-        public override bool Equals(object? obj)
-        {
-            return obj is Utf8Span other && Equals(other);
-        }
+        public override bool Equals(object? obj) => 
+            obj is Utf8Span other && Equals(other);
 
         public override int GetHashCode()
         {
@@ -61,39 +59,17 @@ namespace _1brc
         public override string ToString() => new((sbyte*)Pointer, 0, Length, Encoding.UTF8);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int ParseInt(int start, int length)
-        {
-            int sign = 1;
-            uint value = 0;
-            var end = start + length;
-            
-            for (; start < end; start++)
-            {
-                var c = (uint)Pointer[start];
-
-                if (c == '-')
-                    sign = -1;
-                else
-                    value = value * 10u + (c - '0');
-            }
-
-            var fractional = (uint)Pointer[start + 1] - '0';
-            return sign * (int)(value * 10 + fractional);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal int IndexOf(int start, byte value)
+        internal int IndexOf(int start, byte character)
         {
             if (Avx2.IsSupported)
             {
                 Vector<byte> vec;
-
                 while (true)
                 {
                     if (start + Vector<byte>.Count >= Length)
                         goto FALLBACK;
                     var data = Unsafe.ReadUnaligned<Vector<byte>>(Pointer + start);
-                    vec = Vector.Equals(data, new Vector<byte>(value));
+                    vec = Vector.Equals(data, new Vector<byte>(character));
                     if (!vec.Equals(Vector<byte>.Zero))
                         break;
                     start += Vector<byte>.Count;
@@ -107,7 +83,7 @@ namespace _1brc
 
             FALLBACK:
 
-            int indexOf = AdvanceUnsafe(start).ToSpan().IndexOf(value);
+            int indexOf = AdvanceUnsafe(start).ToSpan().IndexOf(character);
             return indexOf < 0 ? Length : start + indexOf;
         }
     }

@@ -4,11 +4,13 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using static System.Runtime.InteropServices.CollectionsMarshal;
+using System.Buffers.Text;
+using System.Runtime.CompilerServices;
 
 namespace _1brc
 {
-    
-    [StructLayout(LayoutKind.Sequential, 
+
+    [StructLayout(LayoutKind.Sequential,
         Size = 16 // bytes: Sum + Count + Min + Max
     )]
     public struct Summary
@@ -103,43 +105,65 @@ namespace _1brc
             fileStream.Position = newPos;
 
             int c;
-            while ((c = fileStream.ReadByte()) >= 0 && c != '\n') {}
+            while ((c = fileStream.ReadByte()) >= 0 && c != '\n') { }
 
             return fileStream.Position;
         }
 
-        public static Dictionary<Utf8Span, Summary> ProcessChunk(Utf8Span remaining)
+        public static Dictionary<Utf8Span, Summary> ProcessChunk(Utf8Span span)
         {
             var result = new Dictionary<Utf8Span, Summary>(DICT_INIT_CAPACITY);
 
-            while (remaining.Length > 0)
+            while (span.Length > 0)
             {
-                var separatorIdx = remaining.IndexOf(0, (byte)';');
+                var byteAt = span.Pointer;
 
-                var dotIdx = remaining.IndexOf(separatorIdx + 1, (byte)'.');
-                
-                var nlIdx = remaining.IndexOf(dotIdx + 1, (byte)'\n');
-                        
-                ref var it = ref GetValueRefOrAddDefault(result, new(remaining.Pointer, separatorIdx), out var exists);
+                var separatorIdx = span.IndexOf(0, (byte)';');
 
-                int intPart = remaining.ParseInt(separatorIdx + 1, dotIdx - separatorIdx - 1);
+                var numPos = separatorIdx + 1;
+                var b = byteAt[numPos];
+                int sign = 1;
+                if (b == '-')
+                {
+                    sign = -1;
+                    ++numPos;
+                }
+                int num = 0;
+                while (true)
+                {
+                    b = byteAt[numPos++];
+                    if (b == '.')
+                        break;
+                    num = (num * 10) + (b - '0');
+                }
+
+                // store the fractional part as part of number X 10
+                b = byteAt[numPos];
+                num = (num * 10) + (b - '0');
+
+                num *= sign;
+
+                // ignore any other digits, symbols until new line (it is a rare case because we expect 1 fractionak only)
+                while (byteAt[++numPos] != '\n') {}
+
+                span = new(byteAt + numPos + 1, span.Length - numPos - 1);
+
+                ref var res = ref GetValueRefOrAddDefault(result, new(byteAt, separatorIdx), out var exists);
 
                 if (exists)
                 {
-                    it.Sum += intPart;
-                    it.Cnt++;
-                    it.Min = (short)Math.Min(it.Min, intPart);
-                    it.Max = (short)Math.Max(it.Max, intPart);
+                    res.Sum += num;
+                    res.Cnt++;
+                    res.Min = (short)Math.Min(res.Min, num);
+                    res.Max = (short)Math.Max(res.Max, num);
                 }
                 else
                 {
-                    it.Sum = intPart;
-                    it.Cnt = 1;
-                    it.Min = (short)intPart;
-                    it.Max = (short)intPart;
+                    res.Sum = num;
+                    res.Cnt = 1;
+                    res.Min = (short)num;
+                    res.Max = (short)num;
                 }
-                
-                remaining = remaining.AdvanceUnsafe(nlIdx + 1);
             }
 
             return result;
@@ -190,7 +214,7 @@ namespace _1brc
                 // Console.Write($"{pair.Name} = {pair.Value}");
                 line++;
                 // if (line < result.Count)
-                    // Console.Write(", ");
+                // Console.Write(", ");
             }
 
             // Console.WriteLine("}");
