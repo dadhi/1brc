@@ -159,24 +159,39 @@ namespace _1brc
 
                 pos += semicolonIndex + 1;
 
+                // read the first 4 bytes together
+                // and explicitly handle the temperature patters
                 int number = 0;
-                // read the first 2 bytes together to handle the first being the '-' sign
-                var s = pointer[pos];
-                var b = pointer[pos + 1];
-                if (s != '-')
-                    number = ((s - '0') * 10) + (b - '0');
+                var b0 = pointer[pos];
+                var b1 = pointer[pos + 1];
+                var b2 = pointer[pos + 2];
+                var b3 = pointer[pos + 3];
+                if (b0 != '-')
+                {
+                    if (b1 == '.')
+                        number = (b0 - '0') * 10 + (b2 - '0'); // *.*\n
+                    else
+                    {
+                        number = (b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'); // **.*\n
+                        b3 = pointer[pos + 4];
+                        ++pos;
+                    }
+                }
                 else
-                    number = -(b - '0');
-                ++pos;
-                while ((b = pointer[++pos]) != '.')
-                    number = (number * 10) + (b - '0');
+                {
+                    if (b2 == '.')
+                        number = -(b1 - '0') * 10 + (b3 - '0'); // -*.*\n
+                    else
+                    {
+                        number = -(b1 - '0') * 100 + (b2 - '0') * 10 + pointer[pos + 3]; // -**.*\n
+                        b3 = pointer[pos + 4];
+                        ++pos;
+                    }
+                }
 
-                // read the fractional part after the dot and store it as part of number x10
-                b = pointer[++pos];
-                number = (number * 10) + (b - '0');
-
-                // ignore any other digits or symbols until new line (it is a rare case because we expect 1 fractionak only)
-                while (++pos < length & pointer[pos] != '\n') {}
+                pos += 3;
+                while (b3 != '\n' & ++pos < length)
+                    b3 = pointer[pos];
 
                 ref var res = ref GetValueRefOrAddDefault(result, new(pointer, semicolonIndex), out var exists);
                 if (exists)
@@ -194,7 +209,7 @@ namespace _1brc
                     res.Max = (short)number;
                 }
 
-                pos += 2; // advance to the next line, the 2nd byte
+                ++pos; // advance to the next line, the 2nd byte
             }
 
             return result;
