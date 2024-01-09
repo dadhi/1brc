@@ -4,7 +4,6 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
-using System.Runtime.Intrinsics.X86;
 using System.Numerics;
 using System.Runtime.Intrinsics;
 
@@ -85,7 +84,6 @@ public unsafe class App : IDisposable
     private readonly SafeMemoryMappedViewHandle _vaHandle;
     private readonly byte* _pointer;
     private readonly long _fileLength;
-
     private readonly int _initialChunkCount;
 
     private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
@@ -203,7 +201,7 @@ public unsafe class App : IDisposable
                 var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
                 if (!vecEqSemicolon.Equals(vecZero))
                 {
-                    var foundMask = (uint)Avx2.MoveMask(vecEqSemicolon.AsVector256());
+                    var foundMask = vecEqSemicolon.AsVector256().ExtractMostSignificantBits();
                     semicolonIndex = BitOperations.TrailingZeroCount(foundMask);
                     break;
                 }

@@ -24,15 +24,7 @@ Processed in: 00:00:00.9950907
 */
 
 using System.Diagnostics;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 using _1brc;
-
-if (!Avx2.IsSupported || !Vector256<byte>.IsSupported)
-{
-    Console.WriteLine("AVX2 is not supported but required for this program. There fallback impl. is possible but is not implemented for simplicity.");
-    Environment.Exit(1);
-}
 
 var sw = Stopwatch.StartNew();
 
