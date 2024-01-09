@@ -210,7 +210,7 @@ public unsafe class App : IDisposable
 
             pos += semicolonIndex + 1;
 
-            var temperature = ParseTemperatureUpToEndOfLine(ptr, len, ref pos);
+            var temperature = ParseTemperatureAndPosAfterEol(ptr, len, ref pos);
             var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
             AddOrMergeResult(results, ref resultCount, ref result);
         }
@@ -226,7 +226,7 @@ public unsafe class App : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static short ParseTemperatureUpToEndOfLine(byte* pointer, int length, ref int pos)
+    private static short ParseTemperatureAndPosAfterEol(byte* pointer, int length, ref int pos)
     {
         // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
         var b0 = pointer[pos];
@@ -241,16 +241,15 @@ public unsafe class App : IDisposable
         var b3 = pointer[pos + 3];
 
         // todo: @perf try SWAR SIMD (see Daniel Lemire's blog 'SWAR explained: parsing eight digits')
-        // todo: @perf benchmark again using a simple table lookup of digit -> digit x 10, digit x 100
         int val;
         if (b1 == '.')
             val = sign * ((b0 - '0') * 10 + (b2 - '0'));
         else
             val = sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'));
 
-        pos += 3;
-        while (b3 != '\n' & ++pos < length) // skip the remaining symbols until the end of line (or out of length) - still here to work with weather_stations.csv
-            b3 = pointer[pos];
+        pos += 4;
+        while (b3 != '\n' & pos < length) // skip the remaining symbols until the end of line (or out of length) - still here to work with weather_stations.csv
+            b3 = pointer[pos++];
 
         return (short)val;
     }

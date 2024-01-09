@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Running;
 using bm;
 
-BenchmarkRunner.Run<MinMax>();
+// BenchmarkRunner.Run<MinMaxBenchmark>();
+BenchmarkRunner.Run<ParseNumberBenchmark>();

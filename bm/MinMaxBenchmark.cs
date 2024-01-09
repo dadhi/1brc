@@ -13,25 +13,25 @@ BenchmarkDotNet v0.13.12, Windows 11 (10.0.22631.2861/23H2/2023Update/SunValley3
   [Host]     : .NET 8.0.0 (8.0.23.53103), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
   DefaultJob : .NET 8.0.0 (8.0.23.53103), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
 
-| Method      | Mean      | Error    | StdDev    | Median    | Ratio | RatioSD | Allocated | Alloc Ratio |
-|------------ |----------:|---------:|----------:|----------:|------:|--------:|----------:|------------:|
-| MinMaxNaive | 370.66 us | 7.402 us | 12.162 us | 368.85 us |  5.08 |    0.33 |         - |          NA |
-| MinMaxILP   | 340.03 us | 6.675 us |  7.687 us | 338.54 us |  4.65 |    0.27 |         - |          NA |
-| MinMaxSimd  |  72.86 us | 1.490 us |  4.201 us |  71.28 us |  1.00 |    0.00 |         - |          NA |
+| Method | Mean      | Error    | StdDev    | Median    | Ratio | RatioSD | Allocated | Alloc Ratio |
+|------- |----------:|---------:|----------:|----------:|------:|--------:|----------:|------------:|
+| Naive  | 370.66 us | 7.402 us | 12.162 us | 368.85 us |  5.08 |    0.33 |         - |          NA |
+| ILP    | 340.03 us | 6.675 us |  7.687 us | 338.54 us |  4.65 |    0.27 |         - |          NA |
+| Simd   |  72.86 us | 1.490 us |  4.201 us |  71.28 us |  1.00 |    0.00 |         - |          NA |
 
 ## Adding bit fiddling and branchless to compare to lib implementation
 
-| Method            | Mean      | Error     | StdDev    | Median    | Ratio | RatioSD | Allocated | Alloc Ratio |
-|------------------ |----------:|----------:|----------:|----------:|------:|--------:|----------:|------------:|
-| MinMaxBranchless  | 931.53 us | 18.452 us | 33.273 us | 915.23 us | 12.92 |    0.68 |       1 B |          NA |
-| MinMaxBitFiddling | 706.03 us | 11.397 us | 14.413 us | 701.53 us |  9.84 |    0.33 |         - |          NA |
-| MinMaxStdMath     | 378.88 us |  7.508 us | 10.767 us | 376.43 us |  5.26 |    0.26 |         - |          NA |
-| MinMaxILP         | 355.24 us |  9.127 us | 25.292 us | 346.17 us |  4.92 |    0.39 |         - |          NA |
-| MinMaxSimd        |  72.34 us |  1.442 us |  2.409 us |  72.32 us |  1.00 |    0.00 |         - |          NA |
+| Method      | Mean      | Error     | StdDev    | Median    | Ratio | RatioSD | Allocated | Alloc Ratio |
+|------------ |----------:|----------:|----------:|----------:|------:|--------:|----------:|------------:|
+| Branchless  | 931.53 us | 18.452 us | 33.273 us | 915.23 us | 12.92 |    0.68 |       1 B |          NA |
+| BitFiddling | 706.03 us | 11.397 us | 14.413 us | 701.53 us |  9.84 |    0.33 |         - |          NA |
+| StdMath     | 378.88 us |  7.508 us | 10.767 us | 376.43 us |  5.26 |    0.26 |         - |          NA |
+| ILP         | 355.24 us |  9.127 us | 25.292 us | 346.17 us |  4.92 |    0.39 |         - |          NA |
+| Simd        |  72.34 us |  1.442 us |  2.409 us |  72.32 us |  1.00 |    0.00 |         - |          NA |
 
 */
 [MemoryDiagnoser]
-public class MinMax
+public class MinMaxBenchmark
 {
     private readonly int[] _data = new int[512 * 1024];
 
@@ -44,7 +44,7 @@ public class MinMax
     }
 
     [Benchmark]
-    public (int, int) MinMaxBranchless()
+    public (int, int) Branchless()
     {
         int max = int.MinValue, min = int.MaxValue;
         foreach (var i in _data)
@@ -61,7 +61,7 @@ public class MinMax
     }
 
     [Benchmark]
-    public (int, int) MinMaxBitFiddling()
+    public (int, int) BitFiddling()
     {
         int max = int.MinValue, min = int.MaxValue;
         foreach (var i in _data)
@@ -76,7 +76,7 @@ public class MinMax
     }
 
     [Benchmark]
-    public (int, int) MinMaxStdMath()
+    public (int, int) StdMath()
     {
         int max = int.MinValue, min = int.MaxValue;
         foreach (var i in _data)
@@ -88,7 +88,7 @@ public class MinMax
     }
 
     [Benchmark]
-    public (int, int) MinMaxILP()
+    public (int, int) ILP()
     {
         int max1 = int.MinValue, max2 = int.MinValue, min1 = int.MaxValue, min2 = int.MaxValue;
         for (int i = 0; i < _data.Length; i += 2)
@@ -103,7 +103,7 @@ public class MinMax
     }
 
     [Benchmark(Baseline = true)]
-    public (int, int) MinMaxSimd()
+    public (int, int) Simd()
     {
         Vector<int> vmin = new Vector<int>(int.MaxValue), vmax = new Vector<int>(int.MinValue);
         int vecSize = Vector<int>.Count;

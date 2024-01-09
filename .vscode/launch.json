@@ -5,13 +5,24 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": ".NET Core Launch (console)",
+            "name": "1brc (console)",
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/1brc/bin/Debug/net8.0/1brc.dll",
             "args": [],
             "cwd": "${workspaceFolder}/1brc",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "bm (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bm/bin/Debug/net8.0/bm.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/bm",
             "console": "internalConsole",
             "stopAtEntry": false
         },
