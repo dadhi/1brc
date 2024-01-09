@@ -44,6 +44,7 @@ public unsafe struct StationTemperatures
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal int NameCompareTo(in StationTemperatures other) =>
+        NamePtr == null ? 0 :
         new ReadOnlySpan<byte>(NamePtr, NameLen).SequenceCompareTo(new ReadOnlySpan<byte>(other.NamePtr, other.NameLen));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -87,7 +88,8 @@ public unsafe class App : IDisposable
 
     private readonly int _initialChunkCount;
 
-    private const int RESULTS_CAPACITY = 1_024 << 3;// 1_024;
+    private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
+    // private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
     private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
     private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
     private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
@@ -257,9 +259,6 @@ public unsafe class App : IDisposable
         return (short)val;
     }
 
-#if DEBUG
-    static List<int> _probeCounts = new(); // accumulate the number of probes to analyze the @perf
-#endif
     private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
     {
 #if DEBUG
@@ -297,6 +296,9 @@ public unsafe class App : IDisposable
             ++_probeCounts[probeCount];
 #endif
     }
+#if DEBUG
+    static List<int> _probeCounts = new(); // accumulating the number of probes to analyze the @perf - observability ftw :)
+#endif
 
     public (StationTemperatures[] results, int resultCount) Process() =>
         SplitIntoMemoryChunks()
@@ -326,7 +328,9 @@ public unsafe class App : IDisposable
         // todo: @perf the idea to explore - use insertion sort when adding to results and merge sort here at the end
         Array.Sort(results, static (x, y) => x.NameCompareTo(y));
 
+
         // todo: @perf use faster console output with StreamWriter and Flush at the end
+        var sw = Stopwatch.StartNew();
         Console.OutputEncoding = Encoding.UTF8;
         Console.Write("{");
 
@@ -334,6 +338,8 @@ public unsafe class App : IDisposable
         var many = false;
         foreach (var result in results)
         {
+            if (result.NamePtr == null) // todo: @wip re-check if we need to do that
+                continue;
             if (many)
                 Console.Write(", ");
             many = true;
@@ -342,10 +348,12 @@ public unsafe class App : IDisposable
         }
 
         Console.WriteLine("}");
+        sw.Stop();
+        Console.WriteLine($"Console output took: {sw.Elapsed}");
 
         if (resultCount != 1_000_000_000)
-            Console.WriteLine($"Total line count {lineCount:N0}");
-        Console.WriteLine($"Total unique results {resultCount:N0}");
+            Console.WriteLine($"Total line count: {lineCount:N0}");
+        Console.WriteLine($"Total unique results: {resultCount:N0}");
     }
 
     public void Dispose()
