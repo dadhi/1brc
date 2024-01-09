@@ -87,7 +87,7 @@ public unsafe class App : IDisposable
 
     private readonly int _initialChunkCount;
 
-    private const int RESULTS_CAPACITY = 1_024;
+    private const int RESULTS_CAPACITY = 1_024 << 3;// 1_024;
     private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
     private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
     private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
@@ -221,7 +221,10 @@ public unsafe class App : IDisposable
     private static int FindSemicolonIndexFallback(byte* ptr, int len, int pos)
     {
         int semicolonIndex = new ReadOnlySpan<byte>(ptr + pos, len - pos).IndexOf(SEMICOLON);
-        Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly.");
+        Debug.Assert(semicolonIndex != -1, """
+            Semicolon is not found - means the file is not well-formed. 
+            We assume that it is not the case, and the chunks and the end of the file are aligned correctly.
+        """);
         return semicolonIndex;
     }
 
@@ -254,8 +257,14 @@ public unsafe class App : IDisposable
         return (short)val;
     }
 
+#if DEBUG
+    static List<int> _probeCounts = new(); // accumulate the number of probes to analyze the @perf
+#endif
     private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
     {
+#if DEBUG
+        var probeCount = 0;
+#endif
         var hash = result.NameHashCode();
         var index = hash & RESULTS_CAPACITY_MASK;
         while (true)
@@ -277,7 +286,16 @@ public unsafe class App : IDisposable
                 break;
             }
             index = (index + 1) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
+#if DEBUG
+            ++probeCount;
+#endif
         }
+#if DEBUG
+        if (_probeCounts.Count < probeCount + 1)
+            _probeCounts.Add(0);
+        else
+            ++_probeCounts[probeCount];
+#endif
     }
 
     public (StationTemperatures[] results, int resultCount) Process() =>
