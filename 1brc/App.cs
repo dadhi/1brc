@@ -8,330 +8,334 @@ using System.Runtime.Intrinsics.X86;
 using System.Numerics;
 using System.Runtime.Intrinsics;
 
-namespace _1brc
+namespace _1brc;
+
+public unsafe readonly struct Chunk(byte* pointer, int length) // todo: Slice is a better name?
 {
-    public unsafe readonly struct Chunk(byte* pointer, int length) // todo: Slice is a better name?
+    public readonly byte* Pointer = pointer;
+    public readonly int Length = length;
+}
+
+[StructLayout(LayoutKind.Sequential,
+    Size = 24 // bytes: 8 + 2 + 2 + 2 + 2 + 8
+)]
+public unsafe struct StationTemperatures
+{
+    public readonly byte* NamePtr; // 8 bytes
+    public readonly short NameLen; // 2 bytes
+    public short Min; // 2 bytes
+    public short Max; // 2 bytes
+    public short Count; // 2 bytes
+    public long Sum;  // 8 bytes
+
+    public StationTemperatures(byte* namePtr, short nameLen, short val)
     {
-        public readonly byte* Pointer = pointer;
-        public readonly int Length = length;
+        NamePtr = namePtr;
+        NameLen = nameLen;
+        Min = val;
+        Max = val;
+        Count = 1;
+        Sum = val;
     }
 
-    [StructLayout(LayoutKind.Sequential,
-        Size = 24 // bytes: 8 + 2 + 2 + 2 + 2 + 8
-    )]
-    public unsafe struct Result(byte* str, short len, short val)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool NameEqualTo(in StationTemperatures other) =>
+        new ReadOnlySpan<byte>(NamePtr, NameLen).SequenceEqual(new ReadOnlySpan<byte>(other.NamePtr, other.NameLen));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal int NameCompareTo(in StationTemperatures other) =>
+        new ReadOnlySpan<byte>(NamePtr, NameLen).SequenceCompareTo(new ReadOnlySpan<byte>(other.NamePtr, other.NameLen));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int NameHashCode()
     {
-        public byte* Str = str; // 8 bytes
-        public short Len = len; // 2 bytes
-        public short Min = val; // 2 bytes
-        public short Max = val; // 2 bytes
-        public short Count = 1; // 2 bytes
-        public long Sum = val;  // 8 bytes
+        // Here we use the first 4 chars (if ASCII) and the length for a hash.
+        // The worst case would be a prefix such as Port/Saint and the same length,
+        // which for human geo names is quite rare. 
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool KeyEqualTo(byte* str, int len) =>
-            new ReadOnlySpan<byte>(Str, Len).SequenceEqual(new ReadOnlySpan<byte>(str, len));
+        // .NET dictionary will obviously slow down with collisions but will still work.
+        // If we keep only `*_pointer` the run time is still reasonable ~9 secs.
+        // Just using `if (_len > 0) return (_len * 820243) ^ (*_pointer);` gives 5.8 secs.
+        // By just returning 0 - the worst possible hash function and linear search - the run time is 12x slower at 56 seconds. 
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal int KeyCompareTo(byte* str, int len) =>
-            new ReadOnlySpan<byte>(Str, Len).SequenceCompareTo(new ReadOnlySpan<byte>(str, len));
+        // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int GetHashCode(byte* str, int len)
-        {
-            // Here we use the first 4 chars (if ASCII) and the length for a hash.
-            // The worst case would be a prefix such as Port/Saint and the same length,
-            // which for human geo names is quite rare. 
+        if (NameLen > 3)
+            return (NameLen * 820243) ^ (int)*(uint*)NamePtr;
 
-            // .NET dictionary will obviously slow down with collisions but will still work.
-            // If we keep only `*_pointer` the run time is still reasonable ~9 secs.
-            // Just using `if (_len > 0) return (_len * 820243) ^ (*_pointer);` gives 5.8 secs.
-            // By just returning 0 - the worst possible hash function and linear search - the run time is 12x slower at 56 seconds. 
+        if (NameLen > 1)
+            return (int)(uint)*(ushort*)NamePtr;
 
-            // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
-
-            if (len > 3)
-                return (len * 820243) ^ (int)*(uint*)str;
-
-            if (len > 1)
-                return (int)(uint)*(ushort*)str;
-
-            return (int)(uint)*str;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public string KeyToString() => new((sbyte*)Str, 0, Len, Encoding.UTF8);
-
-        // todo: @perf optimize using stack based steing interpolation
-        public override string ToString() => $"{KeyToString()} = {Min * 0.1:N1}/{Sum * 0.1 / Count:N1}/{Max * 0.1:N1}";
+        return (int)(uint)*NamePtr;
     }
 
-    public unsafe class App : IDisposable
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public string NameToString() => new((sbyte*)NamePtr, 0, NameLen, Encoding.UTF8);
+
+    // todo: @perf optimize using stack based StringBuilder, avoid the NameToString materialization
+    public override string ToString() => $"{NameToString()} = {Min * 0.1:N1}/{Sum * 0.1 / Count:N1}/{Max * 0.1:N1}";
+}
+
+public unsafe class App : IDisposable
+{
+    private readonly FileStream _fileStream;
+    private readonly MemoryMappedFile _mmf;
+    private readonly MemoryMappedViewAccessor _va;
+    private readonly SafeMemoryMappedViewHandle _vaHandle;
+    private readonly byte* _pointer;
+    private readonly long _fileLength;
+
+    private readonly int _initialChunkCount;
+
+    private const int RESULTS_CAPACITY = 1_024;
+    private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
+    private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
+    private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
+
+    public string FilePath { get; }
+
+    public App(string filePath, int? chunkCount = null)
     {
-        private readonly FileStream _fileStream;
-        private readonly MemoryMappedFile _mmf;
-        private readonly MemoryMappedViewAccessor _va;
-        private readonly SafeMemoryMappedViewHandle _vaHandle;
-        private readonly byte* _pointer;
-        private readonly long _fileLength;
+        _initialChunkCount = Math.Max(1, chunkCount ?? Environment.ProcessorCount);
+        FilePath = filePath;
 
-        private readonly int _initialChunkCount;
+        _fileStream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
+        var fileLength = _fileStream.Length;
+        _mmf = MemoryMappedFile.CreateFromFile(FilePath, FileMode.Open);
 
-        private const int RESULTS_CAPACITY = 1_024;
-        private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
-        private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
-        private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
+        byte* ptr = (byte*)0;
+        _va = _mmf.CreateViewAccessor(0, fileLength, MemoryMappedFileAccess.Read);
+        _vaHandle = _va.SafeMemoryMappedViewHandle;
+        _vaHandle.AcquirePointer(ref ptr);
 
-        public string FilePath { get; }
+        _pointer = ptr;
 
-        public App(string filePath, int? chunkCount = null)
+        _fileLength = fileLength;
+    }
+
+    public Chunk[] SplitIntoMemoryChunks()
+    {
+        var sw = Stopwatch.StartNew();
+        Debug.Assert(_fileStream.Position == 0);
+
+        // We want equal chunks not larger than int.MaxValue
+        // We want the number of chunks to be a multiple of CPU count, so multiply by 2
+        // Otherwise with CPU_N+1 chunks the last chunk will be processed alone.
+
+        var chunkCount = _initialChunkCount;
+        var chunkSize = _fileLength / chunkCount;
+        while (chunkSize > MAX_CHUNK_SIZE)
         {
-            _initialChunkCount = Math.Max(1, chunkCount ?? Environment.ProcessorCount);
-            FilePath = filePath;
-
-            _fileStream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.SequentialScan);
-            var fileLength = _fileStream.Length;
-            _mmf = MemoryMappedFile.CreateFromFile(FilePath, FileMode.Open);
-
-            byte* ptr = (byte*)0;
-            _va = _mmf.CreateViewAccessor(0, fileLength, MemoryMappedFileAccess.Read);
-            _vaHandle = _va.SafeMemoryMappedViewHandle;
-            _vaHandle.AcquirePointer(ref ptr);
-
-            _pointer = ptr;
-
-            _fileLength = fileLength;
+            chunkCount *= 2;
+            chunkSize = _fileLength / chunkCount;
         }
 
-        public Chunk[] SplitIntoMemoryChunks()
+        long pos = 0;
+        var chunks = new Chunk[chunkCount];
+        for (int i = 0; i < chunkCount; i++)
         {
-            var sw = Stopwatch.StartNew();
-            Debug.Assert(_fileStream.Position == 0);
-
-            // We want equal chunks not larger than int.MaxValue
-            // We want the number of chunks to be a multiple of CPU count, so multiply by 2
-            // Otherwise with CPU_N+1 chunks the last chunk will be processed alone.
-
-            var chunkCount = _initialChunkCount;
-            var chunkSize = _fileLength / chunkCount;
-            while (chunkSize > MAX_CHUNK_SIZE)
+            var nextChunkPos = pos + chunkSize;
+            int actualChunkLength;
+            if (nextChunkPos >= _fileLength) // todo: @wip do we even need to do that?
             {
-                chunkCount *= 2;
-                chunkSize = _fileLength / chunkCount;
+                actualChunkLength = (int)(_fileLength - pos);
+                Debug.Assert(actualChunkLength > 0);
             }
-
-            long pos = 0;
-            var chunks = new Chunk[chunkCount];
-            for (int i = 0; i < chunkCount; i++)
-            {
-                var nextChunkPos = pos + chunkSize;
-                int actualChunkLength;
-                if (nextChunkPos >= _fileLength) // todo: @wip do we even need to do that?
-                {
-                    actualChunkLength = (int)(_fileLength - pos);
-                    Debug.Assert(actualChunkLength > 0);
-                }
-                else
-                {
-                    nextChunkPos = AlignToNewLineOrEof(_fileStream, nextChunkPos);
-                    actualChunkLength = (int)(nextChunkPos - pos);
-                }
-
-                chunks[i] = new(_pointer + pos, actualChunkLength);
-                pos = nextChunkPos;
-            }
-
-            _fileStream.Position = 0; // don't forget to reset the position
-
-            sw.Stop();
-            Debug.WriteLine($"CHUNKS {sw.Elapsed}");
-            return chunks;
-        }
-
-        private static long AlignToNewLineOrEof(FileStream fileStream, long newPos)
-        {
-            fileStream.Position = newPos;
-
-            int c;
-            while ((c = fileStream.ReadByte()) >= 0 && c != '\n') { }
-
-            return fileStream.Position;
-        }
-
-        const byte SEMICOLON = (byte)';';
-
-        const byte VEC_BYTES = 32; // Vector256 - Avx2.IsSupported
-
-        public static (Result[] results, int count) ProcessChunk(Chunk chunk)
-        {
-            var results = new Result[RESULTS_CAPACITY];
-            var resultCount = 0;
-
-            var vecSemicolon = new Vector<byte>(SEMICOLON);
-            var vecZero = Vector<byte>.Zero;
-
-            var pointer = chunk.Pointer;
-            var length = chunk.Length;
-
-            // loop line by line, line is either terminated by '\n' or EOF
-            var pos = 0;
-            while (pos < length)
-            {
-                var namePos = pos;
-
-                ++pos; // lookup ';' from the 2nd char, because the name should be at least 1 char long
-
-                var semicolonIndex = 0;
-                if (Avx2.IsSupported) // todo: @perf move the check outside the loop
-                {
-                    while (true)
-                    {
-                        if (length < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
-                        {
-                            semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, length - pos).IndexOf(SEMICOLON);
-                            Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly.");
-                            break;
-                        }
-
-                        var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(pointer + pos);
-                        var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
-                        if (!vecEqSemicolon.Equals(vecZero))
-                        {
-                            var foundMask = Avx2.MoveMask(vecEqSemicolon.AsVector256());
-                            semicolonIndex = BitOperations.TrailingZeroCount((uint)foundMask);
-                            break;
-                        }
-                        pos += VEC_BYTES;
-                    }
-                }
-                else
-                {
-                    semicolonIndex = new ReadOnlySpan<byte>(pointer + pos, length - pos).IndexOf(SEMICOLON);
-                    Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly.");
-                }
-                pos += semicolonIndex + 1;
-
-                var temperature = ParseTemperatureUpToEndOfLine(pointer, length, ref pos);
-
-                var result = new Result(pointer + namePos, (short)semicolonIndex, temperature);
-                MergeResult(results, ref resultCount, ref result);
-
-                ++pos; // advance to the next line, the 2nd byte
-            }
-
-            return (results, resultCount);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static short ParseTemperatureUpToEndOfLine(byte* pointer, int length, ref int pos)
-        {
-            // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
-            var b0 = pointer[pos];
-            var sign = 1;
-            if (b0 == '-')
-            {
-                sign = -1;
-                b0 = pointer[++pos];
-            }
-            var b1 = pointer[pos + 1];
-            var b2 = pointer[pos + 2];
-            var b3 = pointer[pos + 3];
-
-            // todo: @perf try SWAR SIMD (see Daniel Lemire's blog 'SWAR explained: parsing eight digits')
-            // todo: @perf benchmark again using a simple table lookup of digit -> digit x 10, digit x 100
-            int val;
-            if (b1 == '.')
-                val = sign * ((b0 - '0') * 10 + (b2 - '0'));
             else
-                val = sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'));
+            {
+                nextChunkPos = AlignToNewLineOrEof(_fileStream, nextChunkPos);
+                actualChunkLength = (int)(nextChunkPos - pos);
+            }
 
-            pos += 3;
-            while (b3 != '\n' & ++pos < length) // skip the remaining symbols until the end of line (or out of length) - still here to work with weather_stations.csv
-                b3 = pointer[pos];
-
-            return (short)val;
+            chunks[i] = new(_pointer + pos, actualChunkLength);
+            pos = nextChunkPos;
         }
 
-        private static void MergeResult(Result[] results, ref int count, ref Result result)
+        _fileStream.Position = 0; // don't forget to reset the position
+
+        sw.Stop();
+        Debug.WriteLine($"CHUNKS {sw.Elapsed}");
+        return chunks;
+    }
+
+    private static long AlignToNewLineOrEof(FileStream fileStream, long newPos)
+    {
+        fileStream.Position = newPos;
+
+        int c;
+        while ((c = fileStream.ReadByte()) >= 0 && c != '\n') { }
+
+        return fileStream.Position;
+    }
+
+    const byte SEMICOLON = (byte)';';
+
+    const byte VEC_BYTES = 32; // Vector256 - Avx2.IsSupported
+
+    public static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
+    {
+        var results = new StationTemperatures[RESULTS_CAPACITY]; // todo: @perf find a way to do it on stack - the problem is how to merge those from multiple threads?
+        var resultCount = 0;
+
+        var vecSemicolon = new Vector<byte>(SEMICOLON);
+        var vecZero = Vector<byte>.Zero;
+
+        var ptr = chunk.Pointer;
+        var len = chunk.Length;
+
+        // loop line by line, line is either terminated by '\n' or EOF
+        var pos = 0;
+        while (pos < len)
         {
-            var hash = Result.GetHashCode(result.Str, result.Len);
-            var index = hash & RESULTS_CAPACITY_MASK;
+            var namePos = pos;
+            int semicolonIndex;
             while (true)
             {
-                ref var res = ref results[index];
-                if (res.Str == null)
+                if (len < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
                 {
-                    ++count;
-                    Debug.Assert(count <= RESULTS_MAX_COUNT, "Unexpectedly too many unique results. Increase the capacity.");
-                    res = result;
+                    semicolonIndex = FindSemicolonIndexFallback(ptr, len, pos);
                     break;
                 }
-                if (res.KeyEqualTo(result.Str, result.Len))
+
+                var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(ptr + pos);
+                var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
+                if (!vecEqSemicolon.Equals(vecZero))
                 {
-                    res.Sum += result.Sum;
-                    res.Count++;
-                    res.Min = Math.Min(res.Min, result.Min);
-                    res.Max = Math.Max(res.Max, result.Max);
+                    var foundMask = (uint)Avx2.MoveMask(vecEqSemicolon.AsVector256());
+                    semicolonIndex = BitOperations.TrailingZeroCount(foundMask);
                     break;
                 }
-                index = (index + 1) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
+                pos += VEC_BYTES;
             }
+
+            pos += semicolonIndex + 1;
+
+            var temperature = ParseTemperatureUpToEndOfLine(ptr, len, ref pos);
+            var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
+            AddOrMergeResult(results, ref resultCount, ref result);
         }
 
-        public (Result[] results, int resultCount) Process() =>
-            SplitIntoMemoryChunks()
-#if DEBUG
-                .AsParallel()
-#endif
-                .Select(ProcessChunk)
-                .ToList()
-                .Aggregate((total, chunk) =>
-                {
-                    var (totalResults, totalCount) = total;
-                    var (chunkResults, _) = chunk;
-                    for (int i = 0; i < chunkResults.Length; i++)
-                    {
-                        ref var chunkResult = ref chunkResults[i];
-                        if (chunkResult.Str != null)    // todo: @perf speed-up the scan with SIMD
-                            MergeResult(totalResults, ref totalCount, ref chunkResult);
-                    }
+        return (results, resultCount);
+    }
 
-                    return (totalResults, totalCount);
-                });
+    private static int FindSemicolonIndexFallback(byte* ptr, int len, int pos)
+    {
+        int semicolonIndex = new ReadOnlySpan<byte>(ptr + pos, len - pos).IndexOf(SEMICOLON);
+        Debug.Assert(semicolonIndex == -1, "Semicolon is not found - means the file is not well-formed. We assume that it is not the case, and we aligning the chunks correctly.");
+        return semicolonIndex;
+    }
 
-        public void PrintResult()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static short ParseTemperatureUpToEndOfLine(byte* pointer, int length, ref int pos)
+    {
+        // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
+        var b0 = pointer[pos];
+        var sign = 1;
+        if (b0 == '-')
         {
-            var (results, resultCount) = Process();
+            sign = -1;
+            b0 = pointer[++pos];
+        }
+        var b1 = pointer[pos + 1];
+        var b2 = pointer[pos + 2];
+        var b3 = pointer[pos + 3];
 
-            Array.Sort(results, (x, y) => x.KeyCompareTo(y.Str, y.Len));
+        // todo: @perf try SWAR SIMD (see Daniel Lemire's blog 'SWAR explained: parsing eight digits')
+        // todo: @perf benchmark again using a simple table lookup of digit -> digit x 10, digit x 100
+        int val;
+        if (b1 == '.')
+            val = sign * ((b0 - '0') * 10 + (b2 - '0'));
+        else
+            val = sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'));
 
-            Console.OutputEncoding = Encoding.UTF8;
-            Console.Write("{");
+        pos += 3;
+        while (b3 != '\n' & ++pos < length) // skip the remaining symbols until the end of line (or out of length) - still here to work with weather_stations.csv
+            b3 = pointer[pos];
 
-            var lineCount = 0;
-            var many = false;
-            foreach (var result in results)
+        return (short)val;
+    }
+
+    private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
+    {
+        var hash = result.NameHashCode();
+        var index = hash & RESULTS_CAPACITY_MASK;
+        while (true)
+        {
+            ref var res = ref results[index];
+            if (res.NamePtr == null)
             {
-                if (many)
-                    Console.Write(", ");
-                many = true;
-                Console.Write(result);
-                lineCount += result.Count;
+                ++count;
+                Debug.Assert(count <= RESULTS_MAX_COUNT, "Unexpectedly too many unique results. Increase the capacity.");
+                res = result;
+                break;
             }
-
-            Console.WriteLine("}");
-
-            if (resultCount != 1_000_000_000)
-                Console.WriteLine($"Total line count {lineCount:N0}");
-            Console.WriteLine($"Total unique results {resultCount:N0}");
+            if (res.NameEqualTo(result)) // todo: @perf store the hash and fast scan with SIMD to compare before comparing the name
+            {
+                res.Sum += result.Sum;
+                res.Count++;
+                res.Min = Math.Min(res.Min, result.Min);
+                res.Max = Math.Max(res.Max, result.Max);
+                break;
+            }
+            index = (index + 1) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
         }
+    }
 
-        public void Dispose()
+    public (StationTemperatures[] results, int resultCount) Process() =>
+        SplitIntoMemoryChunks()
+#if !DEBUG
+            .AsParallel()
+#endif
+            .Select(ProcessChunk)
+            .ToList()
+            .Aggregate((total, chunk) =>
+            {
+                var (totalResults, totalCount) = total;
+                var (chunkResults, _) = chunk;
+                for (int i = 0; i < chunkResults.Length; i++)
+                {
+                    ref var chunkResult = ref chunkResults[i];
+                    if (chunkResult.NamePtr != null)    // todo: @perf speed-up the scan with SIMD
+                        AddOrMergeResult(totalResults, ref totalCount, ref chunkResult);
+                }
+
+                return (totalResults, totalCount);
+            });
+
+    public void PrintResult()
+    {
+        var (results, resultCount) = Process();
+
+        // todo: @perf the idea to explore - use insertion sort when adding to results and merge sort here at the end
+        Array.Sort(results, static (x, y) => x.NameCompareTo(y));
+
+        // todo: @perf use faster console output with StreamWriter and Flush at the end
+        Console.OutputEncoding = Encoding.UTF8;
+        Console.Write("{");
+
+        var lineCount = 0;
+        var many = false;
+        foreach (var result in results)
         {
-            _vaHandle.Dispose();
-            _va.Dispose();
-            _mmf.Dispose();
-            _fileStream.Dispose();
+            if (many)
+                Console.Write(", ");
+            many = true;
+            Console.Write(result);
+            lineCount += result.Count;
         }
+
+        Console.WriteLine("}");
+
+        if (resultCount != 1_000_000_000)
+            Console.WriteLine($"Total line count {lineCount:N0}");
+        Console.WriteLine($"Total unique results {resultCount:N0}");
+    }
+
+    public void Dispose()
+    {
+        _vaHandle.Dispose();
+        _va.Dispose();
+        _mmf.Dispose();
+        _fileStream.Dispose();
     }
 }

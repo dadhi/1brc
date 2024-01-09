@@ -1,30 +1,24 @@
 ﻿using System.Diagnostics;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+using _1brc;
 
-namespace _1brc;
-
-/*
-# Results on my machine:
-
-$ dotnet run -c Release --project ./1brc
-Total row count 44,691
-
-## No more tuples for chunks
-
-Processed in 00:00:00.1270662
-
-*/
-
-class Program
+if (!Avx2.IsSupported || !Vector256<byte>.IsSupported)
 {
-    static void Main(string[] args)
-    {
-        var sw = Stopwatch.StartNew();
-        var path = args.Length > 0 ? args[0] : @"C:\oss\measurements.txt"; // @"C:\oss\1brc\weather_stations.csv"
-        using var app = new App(path);
-        // Console.WriteLine($"Chunk count: {app.SplitIntoMemoryChunks().Count}");
-        app.PrintResult();
-        sw.Stop();
-        Console.WriteLine($"Processed in {sw.Elapsed}");
-        Environment.Exit(0);
-    }
+    Console.WriteLine("AVX2 is not supported but required for this program. There fallback impl. is possible but is not implemented for simplicity.");
+    Environment.Exit(1);
 }
+
+var sw = Stopwatch.StartNew();
+
+var stationsFile = @"C:\oss\1brc\weather_stations.csv";
+// var stations = @"C:\oss\measurements.txt";
+
+var path = args.Length > 0 ? args[0] : stationsFile;
+
+using var app = new App(path);
+app.PrintResult();
+
+sw.Stop();
+Console.WriteLine($"Processed in {sw.Elapsed}");
+Environment.Exit(0);
