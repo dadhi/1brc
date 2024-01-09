@@ -19,8 +19,7 @@ class Program
     static void Main(string[] args)
     {
         var sw = Stopwatch.StartNew();
-        // var path = args.Length > 0 ? args[0] : @"C:\oss\1brc\weather_stations.csv";
-        var path = args.Length > 0 ? args[0] : @"C:\oss\measurements.txt";
+        var path = args.Length > 0 ? args[0] : @"C:\oss\measurements.txt"; // @"C:\oss\1brc\weather_stations.csv"
         using var app = new App(path);
         // Console.WriteLine($"Chunk count: {app.SplitIntoMemoryChunks().Count}");
         app.PrintResult();
