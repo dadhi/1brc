@@ -86,8 +86,8 @@ public unsafe class App : IDisposable
     private readonly long _fileLength;
     private readonly int _initialChunkCount;
 
-    private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
-    // private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
+    // private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
+    private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
     private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
     private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
     private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
@@ -259,11 +259,9 @@ public unsafe class App : IDisposable
 
     private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
     {
-#if DEBUG
-        var probeCount = 0;
-#endif
         var hash = result.NameHashCode();
         var index = hash & RESULTS_CAPACITY_MASK;
+        var probe = 0;
         while (true)
         {
             ref var res = ref results[index];
@@ -282,20 +280,23 @@ public unsafe class App : IDisposable
                 res.Max = Math.Max(res.Max, result.Max);
                 break;
             }
-            index = (index + 1) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
-#if DEBUG
-            ++probeCount;
-#endif
+
+            ++probe;
+
+            // 7 quadratic probes vs. 26 for linear ! (measurements.txt)
+            index = (index + (probe * probe)) & RESULTS_CAPACITY_MASK; // quadratic probing using probe with wrap-around
+
+            // index = (index + probe) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
         }
 #if DEBUG
-        if (_probeCounts.Count < probeCount + 1)
-            _probeCounts.Add(0);
+        if (_probes.Count < probe + 1)
+            _probes.Add(1);
         else
-            ++_probeCounts[probeCount];
+            ++_probes[probe];
 #endif
     }
 #if DEBUG
-    static List<int> _probeCounts = new(); // accumulating the number of probes to analyze the @perf - observability ftw :)
+    static List<int> _probes = new(); // accumulating the number of probes to analyze the @perf - observability ftw :)
 #endif
 
     public (StationTemperatures[] results, int resultCount) Process() =>
