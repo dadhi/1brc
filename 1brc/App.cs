@@ -313,26 +313,35 @@ public unsafe struct App : IDisposable
     static List<int> _probes = new(); // accumulating the number of probes to analyze the @perf - observability ftw :)
 #endif
 
-    public (StationTemperatures[] results, int resultCount) Process() =>
-        SplitIntoMemoryChunks()
+    public (StationTemperatures[] results, int resultCount) Process()
+    {
+        var chunks =
+            SplitIntoMemoryChunks()
 #if !DEBUG
             .AsParallel()
 #endif
             .Select(ProcessChunk)
-            .ToList()
-            .Aggregate((total, chunk) =>
-            {
-                var (totalResults, totalCount) = total;
-                var (chunkResults, _) = chunk;
-                for (int i = 0; i < chunkResults.Length; i++)
-                {
-                    ref var chunkResult = ref chunkResults[i];
-                    if (chunkResult.NamePtr != null)    // todo: @perf speed-up the scan with SIMD
-                        AddOrMergeResult(totalResults, ref totalCount, ref chunkResult);
-                }
+            .ToList();
 
-                return (totalResults, totalCount);
-            });
+        var sw = Stopwatch.StartNew();
+
+        var (totalResults, totalCount) = chunks[0];
+        for (int chunk = 1; chunk < chunks.Count; chunk++)
+        {
+            var (results, _) = chunks[chunk];
+            for (int i = 0; i < results.Length; i++)
+            {
+                ref var result = ref results[i];
+                if (result.NamePtr != null)
+                    AddOrMergeResult(totalResults, ref totalCount, ref result);
+            }
+        }
+
+        sw.Stop();
+        Console.WriteLine($"Aggregating chunk results took: {sw.Elapsed}");
+
+        return (totalResults, totalCount);
+    }
 
     public void PrintResult()
     {
@@ -348,15 +357,13 @@ public unsafe struct App : IDisposable
         Console.Write("{");
 
         var lineCount = 0;
-        var many = false;
         foreach (var result in results)
         {
             if (result.NamePtr == null) // todo: @wip re-check if we need to do that
                 continue;
-            if (many)
-                Console.Write(", ");
-            many = true;
-            Console.Write(result);
+            // if (lineCount != 0)
+            //     Console.Write(", ");
+            // Console.Write(result);
             lineCount += result.Count;
         }
 
