@@ -193,32 +193,46 @@ public unsafe struct App : IDisposable
         var ptr = chunk.Pointer;
         var len = chunk.Length;
 
+        var posOfNextSemicolon = -1;
+
         // loop line by line, line is either terminated by '\n' or EOF
         var pos = 0;
         while (pos < len)
         {
             var namePos = pos;
             int semicolonIndex;
-            while (true)
+            if (posOfNextSemicolon != -1)
             {
-                if (len < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
-                {
-                    semicolonIndex = FindSemicolonIndexFallback(ptr, len, pos);
-                    break;
-                }
-
-                // todo: @perf use it as a top loop to read the bytes, then find the semicolons and line endings.
-                var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(ptr + pos);
-                var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
-                if (!vecEqSemicolon.Equals(vecZero))
-                {
-                    var foundMask = vecEqSemicolon.AsVector256().ExtractMostSignificantBits();
-                    semicolonIndex = BitOperations.TrailingZeroCount(foundMask);
-                    break;
-                }
-                pos += VEC_BYTES;
+                semicolonIndex = posOfNextSemicolon - pos;
+                posOfNextSemicolon = -1;
             }
+            else
+            {
+                while (true)
+                {
+                    if (len < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
+                    {
+                        semicolonIndex = FindSemicolonIndexFallback(ptr, len, pos);
+                        break;
+                    }
 
+                    // todo: @perf use it as a top loop to read the bytes, then find the semicolons and line endings.
+                    var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(ptr + pos);
+                    var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
+                    if (!vecEqSemicolon.Equals(vecZero))
+                    {
+                        var foundMask = vecEqSemicolon.AsVector256().ExtractMostSignificantBits();
+                        semicolonIndex = BitOperations.TrailingZeroCount(foundMask);
+    
+                        // look for the next semicolon in the same vector, because the vector is 32 bytes wide and usually it accommodates the 2 lines
+                        foundMask >>= semicolonIndex + 1;
+                        if (foundMask != 0)
+                            posOfNextSemicolon = pos + semicolonIndex + 1 + BitOperations.TrailingZeroCount(foundMask);
+                        break;
+                    }
+                    pos += VEC_BYTES;
+                }
+            }
             pos += semicolonIndex + 1;
 
             var temperature = ParseTemperatureAndPosAfterEol(ptr, len, ref pos);
@@ -359,7 +373,7 @@ public unsafe struct App : IDisposable
         var lineCount = 0;
         foreach (var result in results)
         {
-            if (result.NamePtr == null) // todo: @wip re-check if we need to do that
+            if (result.NamePtr == null)
                 continue;
             // if (lineCount != 0)
             //     Console.Write(", ");
