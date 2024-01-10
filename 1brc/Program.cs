@@ -6,7 +6,7 @@
 
 private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
 
-Console output took: 00:00:03.8005088
+Console output: 00:00:03.8005088
 Total line count: 44,294
 Total unique results: 41,342
 Processed in: 00:00:04.1373231
@@ -15,7 +15,7 @@ Processed in: 00:00:04.1373231
 
 Some spead-up
 
-Console output took: 00:00:02.9858855
+Console output: 00:00:02.9858855
 Total line count: 44,294
 Total unique results: 41,343
 Processed in: 00:00:03.0633131
@@ -28,7 +28,7 @@ Processed in: 00:00:03.0633131
 todo: @perf reduce memory - robin hood to the rescue :)
 private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
 
-Console output took: 00:00:00.0496668
+Console output: 00:00:00.0496668
 Total line count: 12,503,143
 Total unique results: 413
 Processed in: 00:00:00.9950907
@@ -38,7 +38,8 @@ Processed in: 00:00:00.9950907
 
 No difference.
 
-Console output took: 00:00:00.0685998
+Aggregating chunk results: 00:00:00.0048256 - nothing
+Console output: 00:00:00.0685998 - small something
 Total line count: 12,503,143
 Total unique results: 413
 Processed in: 00:00:01.0713925

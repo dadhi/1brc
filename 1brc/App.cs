@@ -96,8 +96,8 @@ public unsafe struct App : IDisposable
     private readonly long _fileLength;
     private readonly int _initialChunkCount;
 
-    private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
-    // private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
+    private const int RESULTS_CAPACITY = 1_024 * 16; // for measurements.txt; expecting ~10_000 unique results
+    // private const int RESULTS_CAPACITY = 1_024 * 64; // for weather_stations.csv; expecting ~40_000 unique results
     private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
     private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
     private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
@@ -338,7 +338,7 @@ public unsafe struct App : IDisposable
         }
 
         sw.Stop();
-        Console.WriteLine($"Aggregating chunk results took: {sw.Elapsed}");
+        Console.WriteLine($"Aggregating chunk results: {sw.Elapsed}");
 
         return (totalResults, totalCount);
     }
@@ -369,7 +369,7 @@ public unsafe struct App : IDisposable
 
         Console.WriteLine("}");
         sw.Stop();
-        Console.WriteLine($"Console output took: {sw.Elapsed}");
+        Console.WriteLine($"Console output: {sw.Elapsed}");
 
         if (resultCount != 1_000_000_000)
             Console.WriteLine($"Total line count: {lineCount:N0}");
