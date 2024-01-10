@@ -1,7 +1,8 @@
 ﻿/*
-## 1. Baseline with no Dictionary:
 
-### weather_stations.csv
+## weather_stations.csv
+
+### 1 Baseline with custom map
 
 private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
 
@@ -10,8 +11,19 @@ Total line count: 44,294
 Total unique results: 41,342
 Processed in: 00:00:04.1373231
 
+### 2 Calculating the hash once and storing it in entry; quadratic probing instead of linear. 
 
-### measurements.txt
+Some spead-up
+
+Console output took: 00:00:02.9858855
+Total line count: 44,294
+Total unique results: 41,343
+Processed in: 00:00:03.0633131
+
+
+## measurements.txt
+
+### 1 Baseline with custom map
 
 todo: @perf reduce memory - robin hood to the rescue :)
 private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
@@ -20,6 +32,16 @@ Console output took: 00:00:00.0496668
 Total line count: 12,503,143
 Total unique results: 413
 Processed in: 00:00:00.9950907
+
+
+### 2 Calculating the hash once and storing it in entry; quadratic probing instead of linear. 
+
+No difference.
+
+Console output took: 00:00:00.0685998
+Total line count: 12,503,143
+Total unique results: 413
+Processed in: 00:00:01.0713925
 
 */
 

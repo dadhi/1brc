@@ -21,22 +21,24 @@ unsafe readonly struct Chunk
 }
 
 [StructLayout(LayoutKind.Sequential,
-    Size = 24 // bytes: 8 + 2 + 2 + 2 + 2 + 8
+    Size = 4 + 8 + 2 + 2 + 2 + 2 + 8 // 28 bytes
 )]
 public unsafe struct StationTemperatures
 {
     // It is tempting to replace NamePtr with 'int' Offset, but it will require the chunk start pointer to be around:
     // - because the unique names may be found in different chunks,
     // - using the global file pointer negates the win - we need the 'long' Offset back.
+    public readonly int NameHash;  // 4 bytes
     public readonly byte* NamePtr; // 8 bytes
     public readonly short NameLen; // 2 bytes
-    public short Min; // 2 bytes
-    public short Max; // 2 bytes
+    public short Min;   // 2 bytes
+    public short Max;   // 2 bytes
     public short Count; // 2 bytes
-    public long Sum;  // 8 bytes
+    public long Sum;    // 8 bytes
 
     public StationTemperatures(byte* namePtr, short nameLen, short val)
     {
+        NameHash = CalculateNameHash(namePtr, nameLen);
         NamePtr = namePtr;
         NameLen = nameLen;
         Min = val;
@@ -51,11 +53,11 @@ public unsafe struct StationTemperatures
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal int NameCompareTo(in StationTemperatures other) =>
-        NamePtr == null ? 0 :
+        NamePtr == null ? 0 : // provides stable comparison for the empty entries
         new ReadOnlySpan<byte>(NamePtr, NameLen).SequenceCompareTo(new ReadOnlySpan<byte>(other.NamePtr, other.NameLen));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int NameHashCode()
+    static int CalculateNameHash(byte* namePtr, short nameLen)
     {
         // Here we use the first 4 chars (if ASCII) and the length for a hash.
         // The worst case would be a prefix such as Port/Saint and the same length,
@@ -68,13 +70,13 @@ public unsafe struct StationTemperatures
 
         // The magic number 820243 is the largest happy prime that contains 2024 from https://prime-numbers.info/list/happy-primes-page-9
 
-        if (NameLen > 3)
-            return (NameLen * 820243) ^ (int)*(uint*)NamePtr;
+        if (nameLen > 3)
+            return (nameLen * 820243) ^ (int)*(uint*)namePtr;
 
-        if (NameLen > 1)
-            return (int)(uint)*(ushort*)NamePtr;
+        if (nameLen > 1)
+            return (int)(uint)*(ushort*)namePtr;
 
-        return (int)(uint)*NamePtr;
+        return (int)(uint)*namePtr;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -94,8 +96,8 @@ public unsafe struct App : IDisposable
     private readonly long _fileLength;
     private readonly int _initialChunkCount;
 
-    // private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
-    private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
+    private const int RESULTS_CAPACITY = 1_024 << 3; // for measurements.txt;
+    // private const int RESULTS_CAPACITY = 1_024 << 6; // for weather_stations.csv;
     private const int RESULTS_CAPACITY_MASK = RESULTS_CAPACITY - 1;
     private const int RESULTS_MAX_COUNT = RESULTS_CAPACITY - (RESULTS_CAPACITY >> 3);
     private const int MAX_CHUNK_SIZE = int.MaxValue - 100_000;
@@ -268,7 +270,7 @@ public unsafe struct App : IDisposable
 
     private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
     {
-        var hash = result.NameHashCode();
+        var hash = result.NameHash;
         var index = hash & RESULTS_CAPACITY_MASK;
         var probe = 0;
         while (true)
@@ -281,13 +283,16 @@ public unsafe struct App : IDisposable
                 res = result;
                 break;
             }
-            if (res.NameEqualTo(result)) // todo: @perf store the hash and fast scan with SIMD to compare before comparing the name
+            if (res.NameHash == hash) // check the hash first, no need to load the actual string from memory
             {
-                res.Sum += result.Sum;
-                res.Count++;
-                res.Min = Math.Min(res.Min, result.Min);
-                res.Max = Math.Max(res.Max, result.Max);
-                break;
+                if (res.NameEqualTo(result)) // todo: @perf store the hash and fast scan with SIMD to compare before comparing the name
+                {
+                    res.Sum += result.Sum;
+                    res.Count++;
+                    res.Min = Math.Min(res.Min, result.Min);
+                    res.Max = Math.Max(res.Max, result.Max);
+                    break;
+                }
             }
 
             ++probe;
