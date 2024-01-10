@@ -9,10 +9,15 @@ using System.Runtime.Intrinsics;
 
 namespace _1brc;
 
-public unsafe readonly struct Chunk(byte* pointer, int length) // todo: Slice is a better name?
+unsafe readonly struct Chunk
 {
-    public readonly byte* Pointer = pointer;
-    public readonly int Length = length;
+    public readonly byte* Pointer;
+    public readonly int Length;
+    public Chunk(byte* pointer, int length)
+    {
+        Pointer = pointer;
+        Length = length;
+    }
 }
 
 [StructLayout(LayoutKind.Sequential,
@@ -20,6 +25,9 @@ public unsafe readonly struct Chunk(byte* pointer, int length) // todo: Slice is
 )]
 public unsafe struct StationTemperatures
 {
+    // It is tempting to replace NamePtr with 'int' Offset, but it will require the chunk start pointer to be around:
+    // - because the unique names may be found in different chunks,
+    // - using the global file pointer negates the win - we need the 'long' Offset back.
     public readonly byte* NamePtr; // 8 bytes
     public readonly short NameLen; // 2 bytes
     public short Min; // 2 bytes
@@ -76,7 +84,7 @@ public unsafe struct StationTemperatures
     public override string ToString() => $"{NameToString()} = {Min * 0.1:N1}/{Sum * 0.1 / Count:N1}/{Max * 0.1:N1}";
 }
 
-public unsafe class App : IDisposable
+public unsafe struct App : IDisposable
 {
     private readonly FileStream _fileStream;
     private readonly MemoryMappedFile _mmf;
@@ -113,7 +121,7 @@ public unsafe class App : IDisposable
         _fileLength = fileLength;
     }
 
-    public Chunk[] SplitIntoMemoryChunks()
+    Chunk[] SplitIntoMemoryChunks()
     {
         var sw = Stopwatch.StartNew();
         Debug.Assert(_fileStream.Position == 0);
@@ -158,7 +166,7 @@ public unsafe class App : IDisposable
         return chunks;
     }
 
-    private static long AlignToNewLineOrEof(FileStream fileStream, long newPos)
+    static long AlignToNewLineOrEof(FileStream fileStream, long newPos)
     {
         fileStream.Position = newPos;
 
@@ -170,9 +178,9 @@ public unsafe class App : IDisposable
 
     const byte SEMICOLON = (byte)';';
 
-    const byte VEC_BYTES = 32; // Vector256 - Avx2.IsSupported
+    const byte VEC_BYTES = 32; // Vector256<byte>.Count;
 
-    public static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
+    static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
     {
         var results = new StationTemperatures[RESULTS_CAPACITY]; // todo: @perf find a way to do it on stack - the problem is how to merge those from multiple threads?
         var resultCount = 0;
@@ -197,6 +205,7 @@ public unsafe class App : IDisposable
                     break;
                 }
 
+                // todo: @perf use it as a top loop to read the bytes, then find the semicolons and line endings.
                 var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(ptr + pos);
                 var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
                 if (!vecEqSemicolon.Equals(vecZero))

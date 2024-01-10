@@ -28,8 +28,8 @@ using _1brc;
 
 var sw = Stopwatch.StartNew();
 
-var input = @"C:\oss\1brc\weather_stations.csv";
-// var input = @"C:\oss\measurements.txt";
+// var input = @"C:\oss\1brc\weather_stations.csv";
+var input = @"C:\oss\measurements.txt";
 
 var path = args.Length > 0 ? args[0] : input;
 
