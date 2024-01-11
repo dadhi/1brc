@@ -56,8 +56,8 @@ var input = @"C:\oss\measurements.txt";
 
 var path = args.Length > 0 ? args[0] : input;
 
-using var app = new App(path);
-app.PrintResult();
+using (var app = new App(path))
+    app.PrintResult();
 
 sw.Stop();
 Console.WriteLine($"Processed in: {sw.Elapsed}");

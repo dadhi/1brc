@@ -263,8 +263,8 @@ public unsafe struct App : IDisposable
             pos += semicolonIndex + 1;
 
             var temperature = ParseTemperatureAndPosAfterEol(ptr, len, ref pos);
-            var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
-            AddOrMergeResult(results, ref resultCount, ref result);
+            // var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
+            // AddOrMergeResult(results, ref resultCount, ref result);
         }
 #endif
 
@@ -447,9 +447,14 @@ public unsafe struct App : IDisposable
 
     public void Dispose()
     {
+        var sw = Stopwatch.StartNew();
+
         _vaHandle.Dispose();
         _va.Dispose();
         _mmf.Dispose();
         _fileStream.Dispose();
+
+        sw.Stop();
+        Console.WriteLine($"Free resources: {sw.Elapsed}");
     }
 }
