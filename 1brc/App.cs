@@ -178,23 +178,49 @@ public unsafe struct App : IDisposable
         return fileStream.Position;
     }
 
-    const byte SEMICOLON = (byte)';';
-
     const byte VEC_BYTES = 32; // Vector256<byte>.Count;
 
     static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
     {
-        var results = new StationTemperatures[RESULTS_CAPACITY]; // todo: @perf find a way to do it on stack - the problem is how to merge those from multiple threads?
-        var resultCount = 0;
-
-        var vecSemicolon = new Vector<byte>(SEMICOLON);
-        var vecZero = Vector<byte>.Zero;
-
         var ptr = chunk.Pointer;
         var len = chunk.Length;
 
-        var posOfNextSemicolon = -1;
+        var results = new StationTemperatures[RESULTS_CAPACITY]; // todo: @perf find a way to do it on stack - the problem is how to merge those from multiple threads?
+        var resultCount = 0;
 
+        var vecSemicols = Vector256.Create((byte)';');
+        var vecNewLines = Vector256.Create((byte)'\n');
+#if WIP
+        var namePos = 0;
+        var pos = 0;
+        for (; pos < len; pos += VEC_BYTES)
+        {
+            var vecBytes = Unsafe.ReadUnaligned<Vector256<byte>>(ptr + pos);
+            var semicols = Vector256.Equals(vecBytes, vecSemicols).ExtractMostSignificantBits();
+            var newLines = Vector256.Equals(vecBytes, vecNewLines).ExtractMostSignificantBits();
+            while (semicols != 0)
+            {
+                var nameLen = BitOperations.TrailingZeroCount(semicols);
+
+                var temperature = ParseTemperature(ptr, namePos + nameLen + 1);
+                
+                var result = new StationTemperatures(ptr + namePos, (short)nameLen, (short)temperature);
+                AddOrMergeResult(results, ref resultCount, ref result);
+
+                var nextNamePos = BitOperations.TrailingZeroCount(newLines) + 1;
+                newLines >>= nextNamePos;
+                semicols >>= nextNamePos;
+                namePos += nextNamePos;
+                if (semicols == 0)
+                    break;
+            }
+        }
+        if (pos - VEC_BYTES < len) // handling the remainder
+        {
+
+        }
+#else
+        var posOfNextSemicolon = -1;
         // loop line by line, line is either terminated by '\n' or EOF
         var pos = 0;
         while (pos < len)
@@ -216,18 +242,16 @@ public unsafe struct App : IDisposable
                         break;
                     }
 
-                    // todo: @perf use it as a top loop to read the bytes, then find the semicolons and line endings.
-                    var vecBytes = Unsafe.ReadUnaligned<Vector<byte>>(ptr + pos);
-                    var vecEqSemicolon = Vector.Equals(vecBytes, vecSemicolon);
-                    if (!vecEqSemicolon.Equals(vecZero))
+                    var vecBytes = Unsafe.ReadUnaligned<Vector256<byte>>(ptr + pos);
+                    var semicolsMask = Vector256.Equals(vecBytes, vecSemicols).ExtractMostSignificantBits();
+                    if (semicolsMask != 0)
                     {
-                        var foundMask = vecEqSemicolon.AsVector256().ExtractMostSignificantBits();
-                        semicolonIndex = BitOperations.TrailingZeroCount(foundMask);
-    
+                        semicolonIndex = BitOperations.TrailingZeroCount(semicolsMask);
+
                         // look for the next semicolon in the same vector, because the vector is 32 bytes wide and usually it accommodates the 2 lines
-                        foundMask >>= semicolonIndex + 1;
-                        if (foundMask != 0)
-                            posOfNextSemicolon = pos + semicolonIndex + 1 + BitOperations.TrailingZeroCount(foundMask);
+                        semicolsMask >>= semicolonIndex + 1;
+                        if (semicolsMask != 0)
+                            posOfNextSemicolon = pos + semicolonIndex + 1 + BitOperations.TrailingZeroCount(semicolsMask);
                         break;
                     }
                     pos += VEC_BYTES;
@@ -239,13 +263,14 @@ public unsafe struct App : IDisposable
             var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
             AddOrMergeResult(results, ref resultCount, ref result);
         }
+#endif
 
         return (results, resultCount);
     }
 
     private static int FindSemicolonIndexFallback(byte* ptr, int len, int pos)
     {
-        int semicolonIndex = new ReadOnlySpan<byte>(ptr + pos, len - pos).IndexOf(SEMICOLON);
+        int semicolonIndex = new ReadOnlySpan<byte>(ptr + pos, len - pos).IndexOf((byte)';');
         Debug.Assert(semicolonIndex != -1, """
             Semicolon is not found - means the file is not well-formed. 
             We assume that it is not the case, and the chunks and the end of the file are aligned correctly.
@@ -253,6 +278,29 @@ public unsafe struct App : IDisposable
         return semicolonIndex;
     }
 
+#if WIP
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int ParseTemperature(byte* pointer, int pos)
+    {
+        // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
+        var b0 = pointer[pos];
+        var sign = 1;
+        if (b0 == '-')
+        {
+            sign = -1;
+            b0 = pointer[++pos];
+        }
+
+        var b1 = pointer[pos + 1];
+        var b2 = pointer[pos + 2];
+        var b3 = pointer[pos + 3];
+
+        if (b1 != '.')
+            return sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'));
+        return sign * ((b0 - '0') * 10 + (b2 - '0'));
+    }
+
+#else
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static short ParseTemperatureAndPosAfterEol(byte* pointer, int length, ref int pos)
     {
@@ -264,6 +312,7 @@ public unsafe struct App : IDisposable
             sign = -1;
             b0 = pointer[++pos];
         }
+
         var b1 = pointer[pos + 1];
         var b2 = pointer[pos + 2];
         var b3 = pointer[pos + 3];
@@ -281,6 +330,7 @@ public unsafe struct App : IDisposable
 
         return (short)val;
     }
+#endif
 
     private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
     {
@@ -298,8 +348,8 @@ public unsafe struct App : IDisposable
                 break;
             }
             if (res.NameHash == hash) // check the hash first, no need to load the actual string from memory
-            {
-                if (res.NameEqualTo(result)) // todo: @perf store the hash and fast scan with SIMD to compare before comparing the name
+            {   // todo: @perf collect the number of hash collisions
+                if (res.NameEqualTo(result))
                 {
                     res.Sum += result.Sum;
                     res.Count++;
