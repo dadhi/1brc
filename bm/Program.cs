@@ -2,4 +2,6 @@ using BenchmarkDotNet.Running;
 using bm;
 
 // BenchmarkRunner.Run<MinMaxBenchmark>();
-BenchmarkRunner.Run<ParseNumberBenchmark>();
+// BenchmarkRunner.Run<ParseNumberBenchmark>();
+
+new ParseNumberBenchmark().SIMD();

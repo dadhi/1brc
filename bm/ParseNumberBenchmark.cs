@@ -3,6 +3,11 @@ namespace bm;
 using BenchmarkDotNet.Attributes;
 using System.Runtime.CompilerServices;
 using System.Numerics;
+using System.Text.Unicode;
+using System.Text;
+using System.Runtime.InteropServices.Marshalling;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 /*
 ## Baseline
@@ -22,10 +27,50 @@ BenchmarkDotNet v0.13.12, Windows 11 (10.0.22631.2861/23H2/2023Update/SunValley3
 [MemoryDiagnoser]
 public class ParseNumberBenchmark
 {
-    private static readonly string[] _strs = new[] { "35.6\n", "-6.1\n", "8.6\n", "-23.1\n" };
+    static readonly string[] _strs = ["35.6\n", "-6.1\n", "8.6\n", "-23.1\n"];
+
+    static readonly byte[][] _bstrs = _strs.Select(Encoding.UTF8.GetBytes).ToArray();
 
     [Benchmark(Baseline = true)]
-    public int Pattern()
+    public int SIMD()
+    {
+        var sum = 0;
+        var zero = Vector64.Create((byte)'0');
+        var nine = Vector64.Create((byte)'9');
+        foreach (var s in _bstrs)
+        {
+            // var pos = 0;
+
+            ref var b = ref MemoryMarshal.GetArrayDataReference(s);
+            var vec = Vector64.LoadUnsafe(ref b);
+            var dig = Vector64.Subtract(vec, zero);
+            var dig2 = Vector64.ConditionalSelect(Vector64.GreaterThan(dig, nine), Vector64<byte>.Zero, dig);
+
+            // var b0 = s[pos];    //
+            // var b1 = s[pos + 1];
+            // var b2 = s[pos + 2];
+            // var b3 = s[pos + 3];
+
+            // var sign = 1;
+            // if (b0 == '-')
+            // {
+            //     sign = -1;
+            //     b0 = s[++pos];
+            // }
+
+
+            // int val;
+            // if (b1 == '.')
+            //     val = sign * ((b0 - '0') * 10 + (b2 - '0'));
+            // else
+            //     val = sign * ((b0 - '0') * 100 + (b1 - '0') * 10 + (b3 - '0'));
+            // sum += val;
+        }
+        return sum;
+    }
+
+    [Benchmark(Baseline = true)]
+    public int Pattern_with_branches()
     {
         var sum = 0;
         foreach (var s in _strs)

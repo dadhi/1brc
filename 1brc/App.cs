@@ -164,7 +164,7 @@ public unsafe struct App : IDisposable
         _fileStream.Position = 0; // don't forget to reset the position
 
         sw.Stop();
-        Debug.WriteLine($"CHUNKS {sw.Elapsed}");
+        Console.WriteLine($"Slice and align chunks: {sw.Elapsed}");
         return chunks;
     }
 
@@ -180,8 +180,11 @@ public unsafe struct App : IDisposable
 
     const byte VEC_BYTES = 32; // Vector256<byte>.Count;
 
+    static int ChunksProcessed = 0;
+
     static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
     {
+        var sw = Stopwatch.StartNew();
         var ptr = chunk.Pointer;
         var len = chunk.Length;
 
@@ -265,6 +268,8 @@ public unsafe struct App : IDisposable
         }
 #endif
 
+        sw.Stop();
+        Console.WriteLine($"Chunk {Interlocked.Increment(ref ChunksProcessed)}: {sw.Elapsed}");
         return (results, resultCount);
     }
 
@@ -317,7 +322,7 @@ public unsafe struct App : IDisposable
         var b2 = pointer[pos + 2];
         var b3 = pointer[pos + 3];
 
-        // todo: @perf try SWAR SIMD (see Daniel Lemire's blog 'SWAR explained: parsing eight digits')
+        // todo: @perf try SWAR (SIMD within a register), see Daniel Lemire's blog 'SWAR explained: parsing eight digits')
         int val;
         if (b1 == '.')
             val = sign * ((b0 - '0') * 10 + (b2 - '0'));
