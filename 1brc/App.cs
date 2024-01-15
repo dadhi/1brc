@@ -20,17 +20,24 @@ unsafe readonly struct Chunk
     }
 }
 
+[InlineArray(4)]
+public struct Byte4
+{
+    private byte _element;
+}
+
+
 [StructLayout(LayoutKind.Sequential,
-    Size = 4 + 8 + 2 + 2 + 2 + 2 + 8 // 28 bytes
+    Size = 8 + 2 + 2 + 2 + 2 + 8 // 28 bytes
 )]
 public unsafe struct StationTemperatures
 {
     // It is tempting to replace NamePtr with 'int' Offset, but it will require the chunk start pointer to be around:
     // - because the unique names may be found in different chunks,
     // - using the global file pointer negates the win - we need the 'long' Offset back.
-    public readonly int NameHash;  // 4 bytes
     public readonly byte* NamePtr; // 8 bytes
     public readonly short NameLen; // 2 bytes
+    // public readonly Byte4 NamePrefix4; // 4 bytes
     public short Min;   // 2 bytes
     public short Max;   // 2 bytes
     public short Count; // 2 bytes
@@ -38,9 +45,9 @@ public unsafe struct StationTemperatures
 
     public StationTemperatures(byte* namePtr, short nameLen, short val)
     {
-        NameHash = CalculateNameHash(namePtr, nameLen);
         NamePtr = namePtr;
         NameLen = nameLen;
+        // namePrefix4.CopyTo(NamePrefix4);
         Min = val;
         Max = val;
         Count = 1;
@@ -182,6 +189,7 @@ public unsafe struct App : IDisposable
 
     static int ChunksProcessed = 0;
 
+#if WIP
     static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
     {
         var sw = Stopwatch.StartNew();
@@ -193,7 +201,7 @@ public unsafe struct App : IDisposable
 
         var vecSemicols = Vector256.Create((byte)';');
         var vecNewLines = Vector256.Create((byte)'\n');
-#if WIP
+
         var namePos = 0;
         var pos = 0;
         for (; pos < len; pos += VEC_BYTES)
@@ -220,28 +228,46 @@ public unsafe struct App : IDisposable
         }
         if (pos - VEC_BYTES < len) // handling the remainder
         {
-
         }
+
+        sw.Stop();
+        Console.WriteLine($"Chunk {Interlocked.Increment(ref ChunksProcessed)}: {sw.Elapsed}");
+        return (results, resultCount);
+    }
 #else
+
+    static (StationTemperatures[] results, int count) ProcessChunk(Chunk chunk)
+    {
+        var sw = Stopwatch.StartNew();
+        var ptr = chunk.Pointer;
+        var len = chunk.Length;
+
+        var resultCount = 0;
+        StationTemperatures[] results = null;
+        var resentResultCount = 0;
+        Span<StationTemperatures> recentResults = stackalloc StationTemperatures[512];
+
+        var vecSemicols = Vector256.Create((byte)';');
+
         var posOfNextSemicolon = -1;
         // loop line by line, line is either terminated by '\n' or EOF
         var pos = 0;
         while (pos < len)
         {
             var namePos = pos;
-            int semicolonIndex;
+            int nameLen;
             if (posOfNextSemicolon != -1)
             {
-                semicolonIndex = posOfNextSemicolon - pos;
+                nameLen = posOfNextSemicolon - pos;
                 posOfNextSemicolon = -1;
             }
             else
             {
-                while (true)
+                while (true) // simplify and invert the loop to read in Vectors
                 {
-                    if (len < pos + VEC_BYTES) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
+                    if (pos + VEC_BYTES > len) // handle the small remainder at the end of file without SIMD (note that it may be more than 1 line)
                     {
-                        semicolonIndex = FindSemicolonIndexFallback(ptr, len, pos);
+                        nameLen = FindSemicolonIndexFallback(ptr, len, pos);
                         break;
                     }
 
@@ -249,36 +275,149 @@ public unsafe struct App : IDisposable
                     var semicolsMask = Vector256.Equals(vecBytes, vecSemicols).ExtractMostSignificantBits();
                     if (semicolsMask != 0)
                     {
-                        semicolonIndex = BitOperations.TrailingZeroCount(semicolsMask);
+                        nameLen = BitOperations.TrailingZeroCount(semicolsMask);
 
-                        // look for the next semicolon in the same vector, because the vector is 32 bytes wide and usually it accommodates the 2 lines
-                        semicolsMask >>= semicolonIndex + 1;
+                        // look for the next semicolon in the same vector, because the vector is 32 bytes wide and usually accommodates the 2 lines
+                        semicolsMask >>= nameLen + 1;
                         if (semicolsMask != 0)
-                            posOfNextSemicolon = pos + semicolonIndex + 1 + BitOperations.TrailingZeroCount(semicolsMask);
+                            posOfNextSemicolon = pos + nameLen + 1 + BitOperations.TrailingZeroCount(semicolsMask);
                         break;
                     }
                     pos += VEC_BYTES;
                 }
             }
-            pos += semicolonIndex + 1;
 
-            var temperature = ParseTemperatureAndPosAfterEol(ptr, len, ref pos);
-            // var result = new StationTemperatures(ptr + namePos, (short)semicolonIndex, temperature);
-            // AddOrMergeResult(results, ref resultCount, ref result);
-        }
+            // var namePrefix4 = Unsafe.ReadUnaligned<Byte4>(ptr + namePos);
+#if DEBUG
+            // var p4 = new ReadOnlySpan<byte>(namePrefix4);
+            var n = ToString(ptr + namePos, nameLen);
 #endif
+            pos += nameLen + 1;
+            var temperature = ParseTemperatureAndPosAfterEol(ptr, len, ref pos);
+
+            // var m = 0;
+            var l = 0;
+            var r = resentResultCount - 1;
+            while (true)
+            {
+                if (l >= r)
+                {
+                    for (var i = resentResultCount; i > l; --i)
+                        recentResults[i] = recentResults[i - 1];
+                    recentResults[l] = new StationTemperatures(ptr + namePos, (short)nameLen, temperature);
+                    ++resentResultCount;
+                    if (resentResultCount >= 512)
+                    {
+                        MergeRecentResults(ref resultCount, ref results, resentResultCount, recentResults);
+                        resentResultCount = 0; // we don't need to clear the recents, because we will overwrite it, and the count controls the valid entries
+                    }
+                    break;
+                }
+
+                var m = (l + r) / 2;
+                ref var res = ref recentResults[m];
+#if DEBUG
+                var s = ToString(res.NamePtr, res.NameLen);
+#endif
+                var cmpRes = CompareName(res.NamePtr, res.NameLen, ptr + namePos, nameLen);
+                if (cmpRes == 0)
+                {
+                    res.Min = Math.Min(res.Min, temperature);
+                    res.Max = Math.Max(res.Max, temperature);
+                    res.Sum += temperature;
+                    res.Count++;
+                    break;
+                }
+                if (cmpRes > 0)
+                    r = m;
+                else
+                    l = m + 1;
+            }
+        }
 
         sw.Stop();
         Console.WriteLine($"Chunk {Interlocked.Increment(ref ChunksProcessed)}: {sw.Elapsed}");
+
         return (results, resultCount);
     }
 
+    private static void MergeRecentResults(
+        ref int resultCount, ref StationTemperatures[] results,
+        int resentResultCount, Span<StationTemperatures> recentResults)
+    {
+        if (results == null)
+        {
+            results = new StationTemperatures[resentResultCount];
+            recentResults.CopyTo(results);
+            resultCount = resentResultCount;
+            return;
+        }
+
+        var mergedResults = new StationTemperatures[resentResultCount + resultCount];
+        int i = 0, j = 0, k = 0;
+        while (i < resentResultCount & j < resultCount)
+        {
+            ref var rr = ref recentResults[i];
+            ref var result = ref results[j];
+            var cmp = CompareName(rr.NamePtr, rr.NameLen, result.NamePtr, result.NameLen);
+            if (cmp == 0)
+            {
+                ref var mr = ref mergedResults[k];
+                mr = rr;
+                mr.Min = Math.Min(mr.Min, result.Min);
+                mr.Max = Math.Max(mr.Max, result.Max);
+                mr.Sum += result.Sum;
+                mr.Count += result.Count;
+                i++;
+                j++;
+                k++;
+                continue;
+            }
+            if (cmp < 0)
+            {
+                mergedResults[k] = rr;
+                ++i;
+            }
+            else
+            {
+                mergedResults[k] = result;
+                ++j;
+            }
+            k++;
+        }
+
+        while (i < resentResultCount)
+        {
+            mergedResults[k] = recentResults[i++];
+            k++;
+        }
+
+        while (j < resultCount)
+        {
+            mergedResults[k] = results[j++];
+            k++;
+        }
+
+        results = mergedResults;
+        resultCount = k;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CompareName(byte* ptr, int len, byte* otherPtr, int otherLen) =>
+        new ReadOnlySpan<byte>(ptr, len).SequenceCompareTo(new ReadOnlySpan<byte>(otherPtr, otherLen));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static string ToString(byte* namePtr, int nameLen) =>
+        new((sbyte*)namePtr, 0, nameLen, Encoding.UTF8);
+
+
+#endif
     private static int FindSemicolonIndexFallback(byte* ptr, int len, int pos)
     {
         int semicolonIndex = new ReadOnlySpan<byte>(ptr + pos, len - pos).IndexOf((byte)';');
         Debug.Assert(semicolonIndex != -1, """
             Semicolon is not found - means the file is not well-formed. 
-            We assume that it is not the case, and the chunks and the end of the file are aligned correctly.
+            We assume that it is not the case, and the chunks and the end of the file are aligned correctly (because we did it).
         """);
         return semicolonIndex;
     }
@@ -337,51 +476,6 @@ public unsafe struct App : IDisposable
     }
 #endif
 
-    private static void AddOrMergeResult(StationTemperatures[] results, ref int count, ref StationTemperatures result)
-    {
-        var hash = result.NameHash;
-        var index = hash & RESULTS_CAPACITY_MASK;
-        var probe = 0;
-        while (true)
-        {
-            ref var res = ref results[index];
-            if (res.NamePtr == null)
-            {
-                ++count;
-                Debug.Assert(count <= RESULTS_MAX_COUNT, "Unexpectedly too many unique results. Increase the capacity.");
-                res = result;
-                break;
-            }
-            if (res.NameHash == hash) // check the hash first, no need to load the actual string from memory
-            {   // todo: @perf collect the number of hash collisions
-                if (res.NameEqualTo(result))
-                {
-                    res.Sum += result.Sum;
-                    res.Count++;
-                    res.Min = Math.Min(res.Min, result.Min);
-                    res.Max = Math.Max(res.Max, result.Max);
-                    break;
-                }
-            }
-
-            ++probe;
-
-            // 7 quadratic probes vs. 26 for linear ! (measurements.txt)
-            index = (index + (probe * probe)) & RESULTS_CAPACITY_MASK; // quadratic probing using probe with wrap-around
-
-            // index = (index + probe) & RESULTS_CAPACITY_MASK; // linear probing with wrap-around
-        }
-#if DEBUG
-        if (_probes.Count < probe + 1)
-            _probes.Add(1);
-        else
-            ++_probes[probe];
-#endif
-    }
-#if DEBUG
-    static List<int> _probes = new(); // accumulating the number of probes to analyze the @perf - observability ftw :)
-#endif
-
     public (StationTemperatures[] results, int resultCount) Process()
     {
         var chunks =
@@ -394,16 +488,13 @@ public unsafe struct App : IDisposable
 
         var sw = Stopwatch.StartNew();
 
+        // todo: @perf merge the results in parallel
         var (totalResults, totalCount) = chunks[0];
         for (int chunk = 1; chunk < chunks.Count; chunk++)
         {
-            var (results, _) = chunks[chunk];
-            for (int i = 0; i < results.Length; i++)
-            {
-                ref var result = ref results[i];
-                if (result.NamePtr != null)
-                    AddOrMergeResult(totalResults, ref totalCount, ref result);
-            }
+            var (chunkResults, chunkCount) = chunks[chunk];
+            MergeRecentResults(ref totalCount, ref totalResults,
+                chunkCount, new Span<StationTemperatures>(chunkResults, 0, chunkCount));
         }
 
         sw.Stop();
@@ -412,31 +503,27 @@ public unsafe struct App : IDisposable
         return (totalResults, totalCount);
     }
 
-    public void PrintResult()
+    public void ProcessAndPrintResults()
     {
         var (results, resultCount) = Process();
 
-        // todo: @perf the idea to explore - use insertion sort when adding to results and merge sort here at the end
-        Array.Sort(results, static (x, y) => x.NameCompareTo(y));
-
-
-        // todo: @perf use faster console output with StreamWriter and Flush at the end
         var sw = Stopwatch.StartNew();
-        Console.OutputEncoding = Encoding.UTF8;
-        Console.Write("{");
 
         var lineCount = 0;
-        foreach (var result in results)
+        var sb = new StringBuilder(1024 * 32);
+        sb.Append("{ ");
+        for (var i = 0; i < resultCount; i++)
         {
-            if (result.NamePtr == null)
-                continue;
-            // if (lineCount != 0)
-            //     Console.Write(", ");
-            // Console.Write(result);
+            var result = results[i];
+            if (lineCount != 0)
+                sb.Append(", ");
+            sb.Append(result);
             lineCount += result.Count;
         }
 
-        Console.WriteLine("}");
+        // Console.OutputEncoding = Encoding.UTF8;
+        // Console.WriteLine(sb);
+
         sw.Stop();
         Console.WriteLine($"Console output: {sw.Elapsed}");
 
