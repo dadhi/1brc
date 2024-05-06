@@ -1,4 +1,6 @@
-﻿using System.Diagnostics;
+﻿#define WIP
+
+using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -191,36 +193,41 @@ public unsafe struct App : IDisposable
         var results = new StationTemperatures[RESULTS_CAPACITY]; // todo: @perf find a way to do it on stack - the problem is how to merge those from multiple threads?
         var resultCount = 0;
 
-        var vecSemicols = Vector256.Create((byte)';');
-        var vecNewLines = Vector256.Create((byte)'\n');
+        var semicolVec = Vector256.Create((byte)';');
+        var newlineVec = Vector256.Create((byte)'\n');
 #if WIP
         var namePos = 0;
         var pos = 0;
-        for (; pos < len; pos += VEC_BYTES)
+        // for (; pos < len; pos += VEC_BYTES)
         {
-            var vecBytes = Unsafe.ReadUnaligned<Vector256<byte>>(ptr + pos);
-            var semicols = Vector256.Equals(vecBytes, vecSemicols).ExtractMostSignificantBits();
-            var newLines = Vector256.Equals(vecBytes, vecNewLines).ExtractMostSignificantBits();
-            while (semicols != 0)
-            {
-                var nameLen = BitOperations.TrailingZeroCount(semicols);
+            // Example input:
+            // ---
+            // Tokyo;35.6897\Jakarta;-6.1750\Delhi;28.6100\Guangzhou;23.1300
+            //      ^               ^             ^
+            //              ^               ^
+            var aVec = Unsafe.ReadUnaligned<Vector256<byte>>(ptr + pos);
+            
+            var semicolMask = Vector256.Equals(aVec, semicolVec).ExtractMostSignificantBits();
+            var newlineMask = Vector256.Equals(aVec, newlineVec).ExtractMostSignificantBits();
 
-                var temperature = ParseTemperature(ptr, namePos + nameLen + 1);
-                
-                var result = new StationTemperatures(ptr + namePos, (short)nameLen, (short)temperature);
-                AddOrMergeResult(results, ref resultCount, ref result);
+            var semicolPosInVec = BitOperations.TrailingZeroCount(semicolMask);
+            var newlinePosInVec = BitOperations.TrailingZeroCount(newlineMask);
 
-                var nextNamePos = BitOperations.TrailingZeroCount(newLines) + 1;
-                newLines >>= nextNamePos;
-                semicols >>= nextNamePos;
-                namePos += nextNamePos;
-                if (semicols == 0)
-                    break;
-            }
+            var temperature = ParseTemperature(ptr, namePos + semicolPosInVec + 1);
+
+            var result = new StationTemperatures(ptr + namePos, (short)semicolPosInVec, (short)temperature);
+            AddOrMergeResult(results, ref resultCount, ref result);
+
+            var nextNamePos = BitOperations.TrailingZeroCount(newlineMask) + 1;
+            newlineMask >>= nextNamePos;
+            semicolMask >>= nextNamePos;
+            namePos += nextNamePos;
+
         }
+
         if (pos - VEC_BYTES < len) // handling the remainder
         {
-
+            Debug.WriteLine("todo: @wip Handle the remainder");
         }
 #else
         var posOfNextSemicolon = -1;
@@ -284,10 +291,10 @@ public unsafe struct App : IDisposable
     }
 
 #if WIP
+    // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int ParseTemperature(byte* pointer, int pos)
     {
-        // explicitly handle the temperature patterns of '(-)d.d(.*)\n' and '(-)dd.d(.*)\n'
         var b0 = pointer[pos];
         var sign = 1;
         if (b0 == '-')
@@ -412,18 +419,17 @@ public unsafe struct App : IDisposable
         return (totalResults, totalCount);
     }
 
-    public void PrintResult()
+    public void ProcessAndPrintResults()
     {
         var (results, resultCount) = Process();
 
         // todo: @perf the idea to explore - use insertion sort when adding to results and merge sort here at the end
         Array.Sort(results, static (x, y) => x.NameCompareTo(y));
 
-
         // todo: @perf use faster console output with StreamWriter and Flush at the end
         var sw = Stopwatch.StartNew();
-        Console.OutputEncoding = Encoding.UTF8;
-        Console.Write("{");
+        // Console.OutputEncoding = Encoding.UTF8;
+        // Console.Write("{");
 
         var lineCount = 0;
         foreach (var result in results)
@@ -436,9 +442,9 @@ public unsafe struct App : IDisposable
             lineCount += result.Count;
         }
 
-        Console.WriteLine("}");
+        // Console.WriteLine("}");
         sw.Stop();
-        Console.WriteLine($"Console output: {sw.Elapsed}");
+        // Console.WriteLine($"Console output: {sw.Elapsed}");
 
         if (resultCount != 1_000_000_000)
             Console.WriteLine($"Total line count: {lineCount:N0}");
